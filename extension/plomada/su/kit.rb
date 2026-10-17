@@ -165,6 +165,25 @@ module Plomada
       created
     end
 
+    # Softens and smooths every edge between two faces whose normals differ
+    # by less than smooth_max_angle_deg: the facets of a tessellated curve
+    # (slab edges, bands, columns, pools, railings, ramps) shade as one
+    # surface while real corners stay drawn. Returns how many it softened.
+    def soften(entities, max_deg = CONFIG[:smooth_max_angle_deg])
+      limit = Math.cos(max_deg * Math::PI / 180.0)
+      count = 0
+      entities.grep(Sketchup::Edge).each do |e|
+        faces = e.faces
+        next unless faces.size == 2 && faces[0].normal.dot(faces[1].normal) > limit
+
+        e.soft = true
+        e.smooth = true
+        count += 1
+      end
+      entities.grep(Sketchup::Group).each { |g| count += soften(g.entities, max_deg) }
+      count
+    end
+
     def faces_from_loops(loops)
       loops.map { |pts| { outer: pts, holes: [], normal: Geometry.unit3(Geometry.newell(pts)) } }
     end

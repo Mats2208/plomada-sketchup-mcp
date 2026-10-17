@@ -172,14 +172,59 @@ module Plomada
         g = SU.group_on(model, model.entities, name, 'Losas', 'MAT_piso_porcelanato')
         res = Geometry.slab_faces(outline, holes, -thickness, 0.0)
         SU.add_faces(g.entities, res[:faces], always_build: true)
+        SU.soften(g.entities)
         SU.set_attrs(g, 'kind' => 'slab', 'storey' => storey, 'thickness' => thickness,
                         'outline' => JSON.generate(outline), 'wells' => holes.size - res[:skipped].size)
+      end
+
+      # Slab records (0.5): one group per top elevation (N00_losa, N00_losa_2...)
+      # holding the union of the slabs at that top, each group carrying the
+      # records it was built from, and one N00_canto_<id> group per edge band.
+      # Returns the names of the groups it made.
+      def records(model, storey, layout, records, warnings = [])
+        by_id = records.to_h { |r| [r['id'], r] }
+        names = []
+        layout[:slabs].each_with_index do |s, i|
+          name = SU.group_name(storey, 'losa') + (i.zero? ? '' : "_#{i + 1}")
+          g = SU.group_on(model, model.entities, name, 'Losas', slab_material(model, s[:material], warnings))
+          SU.add_faces(g.entities, s[:faces], always_build: true)
+          SU.soften(g.entities)
+          recs = s[:ids].map { |id| { 'v' => 1, 'kind' => 'slab' }.merge(by_id[id]) }
+          SU.set_attrs(g, 'kind' => 'slab', 'storey' => storey, 'thickness' => s[:thickness], 'top' => s[:top],
+                          'ids' => JSON.generate(s[:ids]), 'records' => JSON.generate(recs))
+          names << name
+        end
+        layout[:bands].each do |b|
+          name = SU.group_name(storey, "canto_#{b[:id]}")
+          g = SU.group_on(model, model.entities, name, 'Losas', 'MAT_revoque_blanco')
+          SU.add_faces(g.entities, b[:faces], always_build: true)
+          SU.soften(g.entities)
+          SU.set_attrs(g, 'kind' => 'slab_band', 'storey' => storey, 'slab' => b[:id])
+          names << name
+        end
+        names
+      end
+
+      def slab_material(model, name, warnings)
+        return name if CONFIG[:materials].key?(name) || model.materials[name]
+
+        warnings << "slab material #{name.inspect} is not in the model; MAT_piso_porcelanato used"
+        'MAT_piso_porcelanato'
+      end
+
+      # The slab records stored on a storey's slab groups.
+      def stored_records(model, storey)
+        Storeys.entities(model, storey).select { |g| SU.kind(g) == 'slab' }.flat_map do |g|
+          raw = g.get_attribute(DICT, 'records')
+          raw ? JSON.parse(raw) : []
+        end
       end
 
       def flat_roof(model, storey, outline, wall_top, thickness, overhang, name: SU.group_name(storey, 'techo'))
         g = SU.group_on(model, model.entities, name, 'Losas', 'MAT_hormigon')
         roof = Geometry.flat_roof_outline(outline, overhang)
         SU.add_faces(g.entities, SU.faces_from_loops(Geometry.prism_faces(roof, wall_top, wall_top + thickness)))
+        SU.soften(g.entities)
         SU.set_attrs(g, 'kind' => 'roof', 'roof' => 'flat', 'storey' => storey, 'thickness' => thickness,
                         'overhang' => overhang)
       end
@@ -258,6 +303,16 @@ module Plomada
         SU.add_faces(g.entities, res[:faces], always_build: true)
         SU.set_attrs(g, 'kind' => 'terrain', 'storey' => 'terrain', 'top' => top, 'holes' => holes.size)
       end
+
+      # The terrain as a region (Geometry::Boolean): overlapping holes (a
+      # basement under the ground floor, a ramp cut) merge instead of fighting.
+      def build_region(model, region, top, thickness, material, hole_count)
+        g = SU.group_on(model, model.entities, 'Terreno', 'Entorno', material)
+        faces = region.flat_map { |r| Geometry.region_prism(r[:outer], r[:holes], top - thickness, top) }
+        SU.add_faces(g.entities, faces, always_build: true)
+        SU.soften(g.entities)
+        SU.set_attrs(g, 'kind' => 'terrain', 'storey' => 'terrain', 'top' => top, 'holes' => hole_count)
+      end
     end
 
     # Room labels: 3D text on tag Ambientes, centred on the room point at z 10 mm.
@@ -306,6 +361,7 @@ module Plomada
           'rooms' => of_kind.call(Sketchup::Group, 'room').map { |g| SU.record(g) }.compact,
           'stairs' => of_kind.call(Sketchup::Group, 'stair').map { |g| SU.record(g) }.compact,
           'furniture' => of_kind.call(Sketchup::ComponentInstance, 'furniture').map { |i| SU.record(i) }.compact,
+          'slabs' => Slabs.stored_records(model, storey),
           'storey' => storey_settings(model, storey),
           'storeys' => Storeys.list(model)
         }

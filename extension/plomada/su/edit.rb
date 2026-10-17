@@ -176,9 +176,79 @@ module Plomada
         UnitJob.new('Plomada: set wall height', units) { summary(state, storey).merge('wall' => id, 'height' => height) }
       end
 
+      SLAB_FIELDS = %w[id outline holes thickness top_offset material edge_band].freeze
+
+      # add_slab: the 0.4 call (thickness and a straight outline, or none)
+      # still builds the one automatic slab. With an id, holes, a top offset,
+      # a material, an edge band or a bulged outline, or on a storey that
+      # already has slab records, it adds a slab record and rebuilds the
+      # storey's slabs from all of them.
       def add_slab(params, ctx)
         model = ctx.model
         storey = Storeys.resolve(model, params['storey'])
+        existing = Slabs.stored_records(model, storey)
+        bulged = params['outline'].is_a?(Array) && params['outline'].any? { |p| p.is_a?(Array) && p.size == 3 }
+        return slab_04(params, ctx, storey) unless existing.any? || bulged || (params.keys & (SLAB_FIELDS - %w[outline thickness])).any?
+
+        settings = PlanReader.storey_settings(model, storey)
+        raw = params.slice(*SLAB_FIELDS)
+        raw['id'] ||= next_slab_id(existing)
+        if existing.any? { |r| r['id'] == raw['id'] }
+          raise InvalidParams, "slab #{raw['id'].inspect} already exists on #{storey}; change it with set_slab"
+        end
+
+        raw['outline'] ||= exterior(model, settings, storey)[:points]
+        rec = Plan.slab(raw, 'slab')
+        rebuild_slabs(model, storey, settings, existing + [rec], 'Plomada: add slab', rec['id'])
+      end
+
+      # set_slab: changes the given fields of one slab record and rebuilds the
+      # storey's slabs.
+      def set_slab(params, ctx)
+        model = ctx.model
+        storey = Storeys.resolve(model, params['storey'])
+        id = Plan.text(params['id'], 'id')
+        existing = Slabs.stored_records(model, storey)
+        old = existing.find { |r| r['id'] == id }
+        unless old
+          ids = existing.map { |r| r['id'] }
+          raise InvalidParams, "id names slab #{id.inspect}, which is not on storey #{storey}; "                                "its slab records are #{ids.empty? ? 'none (add_slab with an id makes one)' : ids.join(', ')}"
+        end
+
+        settings = PlanReader.storey_settings(model, storey)
+        rec = Plan.slab(old.reject { |k, _| %w[v kind].include?(k) }.merge(params.slice(*SLAB_FIELDS)), 'slab')
+        records = existing.map { |r| r['id'] == id ? rec : r }
+        rebuild_slabs(model, storey, settings, records, 'Plomada: set slab', id)
+      end
+
+      def next_slab_id(existing)
+        n = 1
+        n += 1 while existing.any? { |r| r['id'] == "L#{n}" }
+        "L#{n}"
+      end
+
+      def rebuild_slabs(model, storey, settings, records, label, id)
+        records = records.map { |r| Plan.slab(r.reject { |k, _| %w[v kind].include?(k) }, "slab #{r['id']}") }
+        elevation = settings.fetch('elevation', 0.0).to_f
+        wells = Storeys.wells(model, elevation, storey)
+        lay = Geometry.slab_layout(records, wells)
+        old = Storeys.entities(model, storey).select { |g| %w[slab slab_band].include?(SU.kind(g)) }
+        state = { elevation: elevation, warnings: lay[:warnings].dup }
+        units = [['floor slabs', lambda {
+          SU.ensure_materials(model)
+          SU.ensure_tags(model)
+          model.entities.erase_entities(old.select(&:valid?)) unless old.empty?
+          state[:before] = Storeys.snapshot(model)
+          state[:groups] = Slabs.records(model, storey, lay, records, state[:warnings])
+        }], raise_unit(model, state, storey)]
+        UnitJob.new(label, units) do
+          { 'storey' => storey, 'slab' => id, 'slabs' => records.map { |r| r['id'] }, 'groups' => state[:groups],
+            'stair_wells' => wells.size, 'warnings' => state[:warnings] }
+        end
+      end
+
+      def slab_04(params, ctx, storey)
+        model = ctx.model
         settings = PlanReader.storey_settings(model, storey)
         elevation = settings.fetch('elevation', 0.0).to_f
         thickness = params['thickness'].nil? ? CONFIG[:slab_thickness_mm] : Plan.positive(params['thickness'], 'thickness')
@@ -252,14 +322,23 @@ module Plomada
           raise InvalidParams, "material #{material.inspect} is not a Plomada material; use one of #{CONFIG[:materials].keys.join(', ')}"
         end
 
-        lowest = Storeys.list(model).first
+        storeys = Storeys.list(model)
+        lowest = storeys.first
         raise InvalidParams, 'no Plomada walls in this model; build a house before add_terrain' unless lowest
 
+        ground_level = Storeys.ground_level(model)
+        sunk = Geometry::Levels.basements(storeys, ground_level)
+        # 0.4: no ground level stored and nothing below 0 -> the lawn's top is the underside of the lowest slab.
+        legacy = !Storeys.ground_level_stored?(model) && sunk.empty?
         settings = PlanReader.storey_settings(model, lowest['name'])
-        plan = Plan.normalize(current_plan(model, lowest['name']).merge('storey' => nil))
-        layout = Geometry.solve_walls(plan['walls'], plan['openings'], storey_height: settings['height'].to_f)
-        holes = (layout[:exteriors] || []).map { |o| o[:points] } + Site.pool_outlines(model)
-        top = lowest['elevation'] - (settings['slab'] == false ? 0.0 : settings.fetch('slab_thickness', CONFIG[:slab_thickness_mm]).to_f)
+        through = legacy ? [lowest] : storeys.select { |s| s['elevation'] <= ground_level + CONFIG[:site_snap_mm] }
+        holes = through.flat_map { |s| storey_exteriors(model, s['name']) } + Site.pool_outlines(model)
+        holes += Ramps.outlines(model, through.map { |s| s['name'] }) unless legacy
+        top = if legacy
+                lowest['elevation'] - (settings['slab'] == false ? 0.0 : settings.fetch('slab_thickness', CONFIG[:slab_thickness_mm]).to_f)
+              else
+                ground_level
+              end
         bb = Geom::BoundingBox.new
         SU.plomada_entities(model).each { |e| bb.add(e.bounds) unless %w[terrain room].include?(SU.kind(e)) }
         lo = SU.to_mm(bb.min)
@@ -271,12 +350,25 @@ module Plomada
           SU.ensure_materials(model)
           SU.ensure_tags(model)
           model.entities.erase_entities(old.select(&:valid?)) unless old.empty?
-          Terrain.build(model, outer, holes, top, thickness, material)
+          if legacy
+            Terrain.build(model, outer, holes, top, thickness, material)
+          else
+            Terrain.build_region(model, Geometry::Boolean.region([{ outer: outer, holes: [] }], holes), top, thickness,
+                                 material, holes.size)
+          end
         }]]
         UnitJob.new('Plomada: add terrain', units) do
           { 'group' => 'Terreno', 'material' => material, 'top_mm' => top, 'holes' => holes.size,
             'size_mm' => [(hi[0] - lo[0] + (2 * margin)).round(1), (hi[1] - lo[1] + (2 * margin)).round(1)] }
         end
+      end
+
+      # The outer faces of a storey's buildings (plan rings, mm).
+      def storey_exteriors(model, storey)
+        settings = PlanReader.storey_settings(model, storey)
+        plan = Plan.normalize(current_plan(model, storey).merge('storey' => nil))
+        layout = Geometry.solve_walls(plan['walls'], plan['openings'], storey_height: settings['height'].to_f)
+        (layout[:exteriors] || []).map { |o| o[:points] }
       end
 
       def exterior(model, settings, storey)

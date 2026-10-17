@@ -42,23 +42,22 @@ module Plomada
       # Elevation (mm) for +name+: explicit wins; an existing storey keeps its
       # own; a new one goes on top of the highest other storey.
       def elevation_for(model, name, explicit, slab_thickness)
-        return explicit.to_f unless explicit.nil?
-
-        storeys = list(model)
-        same = storeys.find { |s| s['name'] == name }
-        return same['elevation'] if same
-
-        others = storeys.reject { |s| s['name'] == name }
-        return 0.0 if others.empty?
-
-        top = others.map { |s| s['elevation'] + s['height'] }.max
-        top + slab_thickness
+        Geometry::Levels.elevation_for(list(model), name, explicit, slab_thickness)
       end
 
-      # The storey right below +elevation+ (the one whose stairs land on it).
-      def below(model, elevation, name)
-        list(model).reject { |s| s['name'] == name }.select { |s| s['elevation'] < elevation - 1.0 }.max_by { |s| s['elevation'] }
+      # The storey right below +elevation+ by elevation (the one whose stairs land on it).
+      def below(model, elevation, name) = Geometry::Levels.below(list(model), elevation, name)
+
+      # The ground level (mm) the site and the terrain stand on: the last one a
+      # build stored in the model, else ground_level_mm.
+      def ground_level(model)
+        stored = model.get_attribute(DICT, 'ground_level_mm')
+        stored.nil? ? CONFIG[:ground_level_mm] : stored.to_f
       end
+
+      def ground_level_stored?(model) = !model.get_attribute(DICT, 'ground_level_mm').nil?
+
+      def store_ground_level(model, value) = model.set_attribute(DICT, 'ground_level_mm', value.to_f)
 
       # The storey an edit or read acts on: the one named, else the only one;
       # with several storeys a name is required (wall ids repeat per floor).

@@ -76,6 +76,7 @@ module Plomada
     arc_min_facets: 4,                     # facets per arc, at least
     arc_max_facets: 96,                    # facets per arc, at most
     arc_min_offset_radius_mm: 50.0,        # mm; Arc.offset refuses a smaller concentric arc
+    smooth_max_angle_deg: 25.0,            # degrees; edges between faces closer than this are soft and smooth
 
     # --- curved walls and their openings -----------------------------------------
     wall_min_inner_radius_mm: 300.0,       # mm; an arc wall with a tighter inner face is refused

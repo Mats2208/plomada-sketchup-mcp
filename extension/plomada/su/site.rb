@@ -39,14 +39,16 @@ module Plomada
       def paving(model, rec, ground, deck: false)
         name = deck ? "deck_#{rec['id']}" : "pavimento_#{rec['id']}"
         g = SU.group_on(model, model.entities, name, 'Entorno', deck ? 'MAT_madera' : 'MAT_pavimento')
-        SU.add_faces(g.entities, SU.faces_from_loops(Geometry.paving_faces(rec['points'], ground)))
+        SU.add_faces(g.entities, SU.faces_from_loops(Geometry.paving_faces(ring(rec), ground)))
+        SU.soften(g.entities)
         SU.set_attrs(g, 'kind' => 'site', 'site_kind' => deck ? 'deck' : 'paving', 'id' => rec['id'],
                         'record' => JSON.generate(rec))
       end
 
       def fence(model, rec, ground)
         g = SU.group_on(model, model.entities, "cerco_#{rec['id']}", 'Entorno', 'MAT_madera')
-        Geometry.fence_parts(rec['points'], rec['closed'], ground, rec['height']).each do |part|
+        pts = Geometry::Arc.polyline(rec['points'], closed: rec['closed'])
+        Geometry.fence_parts(pts, rec['closed'], ground, rec['height']).each do |part|
           sub = SU.group_on(model, g.entities, part[:name], nil, nil)
           SU.add_faces(sub.entities, SU.faces_from_loops(part[:faces]))
         end
@@ -54,7 +56,7 @@ module Plomada
       end
 
       def pool(model, rec, ground)
-        parts = Geometry.pool_parts(rec['points'], ground, rec['depth'])
+        parts = Geometry.pool_parts(ring(rec), ground, rec['depth'])
         g = SU.group_on(model, model.entities, "pileta_#{rec['id']}", 'Entorno', nil)
         { 'borde' => [parts[:coping], 'MAT_pavimento', true], 'vaso' => [parts[:walls], 'MAT_revoque_blanco', true],
           'fondo' => [parts[:floor], 'MAT_revoque_blanco', false], 'agua' => [parts[:water], 'MAT_agua', false] }
@@ -65,6 +67,9 @@ module Plomada
         SU.set_attrs(g, 'kind' => 'site', 'site_kind' => 'pool', 'id' => rec['id'], 'record' => JSON.generate(rec),
                         'outline' => JSON.generate(parts[:outer]))
       end
+
+      # A site polygon with its arcs tessellated.
+      def ring(rec) = Geometry::Arc.polyline(rec['points'], closed: true)
 
       # Outer rings of the pools in the model, for the terrain's holes (mm, world plan).
       def pool_outlines(model)

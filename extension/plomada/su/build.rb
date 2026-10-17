@@ -18,7 +18,8 @@ module Plomada
     # then each step does one small unit (one wall, one opening, one label).
     module Build
       ROOFS = %w[flat gable hip none].freeze
-      KINDS_REPLACED = %w[walls opening slab roof room stair furniture site].freeze
+      KINDS_REPLACED = %w[walls opening slab slab_band roof room stair furniture site
+                          column curtain_wall railing planter pool ramp].freeze
       FURNITURE_MODES = %w[library massing].freeze
       BLONDEL_MM = (600.0..650.0).freeze # 2R + G, comfortable stairs
 
@@ -41,7 +42,8 @@ module Plomada
           'pitch' => opt_num(raw, 'pitch', config[:gable_pitch_deg]),
           'fit_view' => opt_bool(raw, 'fit_view', true),
           'storey' => raw['storey'].nil? ? nil : storey_name(raw['storey']),
-          'elevation' => raw['elevation'].nil? ? nil : Plan.number(raw['elevation'], 'options.elevation'),
+          'elevation' => raw['elevation'].nil? ? nil : Plan.elevation(raw['elevation'], 'options.elevation', config),
+          'ground_level_mm' => raw['ground_level_mm'].nil? ? nil : Plan.elevation(raw['ground_level_mm'], 'options.ground_level_mm', config),
           'library' => raw['library'].nil? ? nil : Plan.text(raw['library'], 'options.library'),
           'furniture' => Plan.choice(raw.fetch('furniture', 'library') || 'library', 'options.furniture', FURNITURE_MODES)
         }.tap do |o|
@@ -72,14 +74,26 @@ module Plomada
       # --- preparation (pure, before any model change) ------------------------------------
 
       # Normalizes the plan, solves the walls and the roof. Raises InvalidParams.
+      # A plan whose storey has elevation_mode explicit carries its own
+      # elevation and a floor-to-floor height (its walls stop under the next
+      # slab); options.elevation and options.storey_height still win when given
+      # for a plan without one.
       def prepare(raw_plan, opts)
         raw = raw_plan.is_a?(Hash) ? raw_plan.dup : raw_plan
-        if raw.is_a?(Hash) && opts['storey_height']
+        own = raw.is_a?(Hash) && raw['storey'].is_a?(Hash) && raw['storey']['elevation_mode'] == 'explicit' &&
+              !raw['storey']['height'].nil?
+        if raw.is_a?(Hash) && opts['storey_height'] && !own
           raw['storey'] = (raw['storey'] || {}).merge('height' => opts['storey_height'])
         end
         raw['storey'] = (raw['storey'] || {}).merge('name' => opts['storey']) if raw.is_a?(Hash) && opts['storey']
         plan = Plan.normalize(raw)
         height = plan['storey']['height']
+        if plan['storey']['elevation_mode'] == 'explicit'
+          opts['elevation'] = plan['storey']['elevation'] if opts['elevation'].nil?
+          opts['elevation_mode'] = 'explicit'
+          opts['floor_to_floor'] = height
+          height = Geometry::Levels.wall_height(height, opts['slab_thickness'])
+        end
         warnings = []
         library = opts['furniture'] == 'library' && Library.map(opts['library']) ? opts['library'] : nil
         if opts['furniture'] == 'library' && library.nil? && (plan['furniture'].any? || plan['site']['objects'].any?)
@@ -213,14 +227,23 @@ module Plomada
             Openings.place(model, frame.merge(record: opening_record(frame[:record])))
           }]
         end
-        prep[:outlines].each_with_index do |outline, i|
-          next unless opts['slab']
-
-          units << ["floor slab #{outline[:wall]}", lambda {
-            name = building_group(storey, 'losa', i)
-            Slabs.slab(model, storey, outline[:points], opts['slab_thickness'], name: name, holes: state[:wells])
-            state[:groups] << name
+        if plan['slabs'].any?
+          # Slab records replace the automatic slab under the exterior wall.
+          units << ["floor slabs #{plan['slabs'].map { |r| r['id'] }.join(', ')}", lambda {
+            lay = Geometry.slab_layout(plan['slabs'], state[:wells])
+            prep[:warnings].concat(lay[:warnings])
+            state[:groups].concat(Slabs.records(model, storey, lay, plan['slabs'], prep[:warnings]))
           }]
+        else
+          prep[:outlines].each_with_index do |outline, i|
+            next unless opts['slab']
+
+            units << ["floor slab #{outline[:wall]}", lambda {
+              name = building_group(storey, 'losa', i)
+              Slabs.slab(model, storey, outline[:points], opts['slab_thickness'], name: name, holes: state[:wells])
+              state[:groups] << name
+            }]
+          end
         end
         prep[:outlines].each_with_index do |outline, i|
           next if opts['roof'] == 'none'
@@ -260,34 +283,35 @@ module Plomada
         units
       end
 
-      # The site stands on the terrain, so only the ground storey builds it.
-      def site_units(model, site, prep, opts, state)
-        ground = -opts['slab_thickness']
+      # The site stands on the terrain, so only the storey closest to the
+      # ground level builds it (place_storey decides), or any storey whose plan
+      # says site_on_ground, which puts it at the ground level itself.
+      def site_units(model, site, prep, _opts, state)
         units = []
         guard = lambda do |label, &work|
           units << [label, lambda {
-            if state[:elevation] > 1.0
+            if state[:site_ok]
+              work.call
+            else
               prep[:warnings] << "#{label} skipped: the site belongs on the ground storey's DXF" unless state[:site_warned]
               state[:site_warned] = true
-            else
-              work.call
             end
           }]
         end
-        hard = (site['paving'] + site['decks']).map { |r| r['points'] }
+        hard = (site['paving'] + site['decks']).map { |r| Geometry::Arc.polyline(r['points'], closed: true) }
         site['objects'].each do |o|
           guard.call("site #{o['item']} #{o['id']}") do
-            if Site.object(model, o, prep[:library], Geometry.site_base(o['at'], hard, ground))
+            if Site.object(model, o, prep[:library], Geometry.site_base(o['at'], hard, state[:site_ground]))
               state[:site] = (state[:site] || 0) + 1
             else
               prep[:warnings] << "site object #{o['item']} (#{o['id']}): no component in the library"
             end
           end
         end
-        site['paving'].each { |r| guard.call("paving #{r['id']}") { Site.paving(model, r, ground) } }
-        site['decks'].each { |r| guard.call("deck #{r['id']}") { Site.paving(model, r, ground, deck: true) } }
-        site['fences'].each { |r| guard.call("fence #{r['id']}") { Site.fence(model, r, ground) } }
-        site['pools'].each { |r| guard.call("pool #{r['id']}") { Site.pool(model, r, ground) } }
+        site['paving'].each { |r| guard.call("paving #{r['id']}") { Site.paving(model, r, state[:site_ground]) } }
+        site['decks'].each { |r| guard.call("deck #{r['id']}") { Site.paving(model, r, state[:site_ground], deck: true) } }
+        site['fences'].each { |r| guard.call("fence #{r['id']}") { Site.fence(model, r, state[:site_ground]) } }
+        site['pools'].each { |r| guard.call("pool #{r['id']}") { Site.pool(model, r, state[:site_ground]) } }
         units
       end
 
@@ -299,6 +323,7 @@ module Plomada
         elevation = Storeys.elevation_for(model, storey, opts['elevation'], opts['slab_thickness'])
         state[:elevation] = elevation
         state[:wells] = Storeys.wells(model, elevation, storey)
+        place_site(model, storey, elevation, opts, prep, state)
         under = Storeys.below(model, elevation, storey)
         if under && (under['elevation'] + under['height']) >= elevation - opts['slab_thickness'] - 1.0
           roofs = Storeys.entities(model, under['name']).select { |e| SU.kind(e) == 'roof' }
@@ -317,6 +342,19 @@ module Plomada
         return if prep[:stairs].empty?
 
         prep[:warnings] << "build #{above['name']} again to cut the stair wells of #{storey} into its slab"
+      end
+
+      # The ground level (an option stores it in the model for later builds and
+      # add_terrain), whether this storey builds the site and at what local z.
+      def place_site(model, storey, elevation, opts, prep, state)
+        Storeys.store_ground_level(model, opts['ground_level_mm']) unless opts['ground_level_mm'].nil?
+        ground_level = Storeys.ground_level(model)
+        on_ground = prep[:plan]['site_on_ground']
+        storeys = Storeys.list(model).reject { |s| s['name'] == storey } +
+                  [{ 'name' => storey, 'elevation' => elevation, 'height' => prep[:height] }]
+        state[:ground_level] = ground_level
+        state[:site_ok] = on_ground || Geometry::Levels.site_storey(storeys, ground_level) == storey
+        state[:site_ground] = Geometry::Levels.site_ground(elevation, opts['slab_thickness'], ground_level, on_ground)
       end
 
       def wall_units(model, plan, layout, storey, height, state)
@@ -344,6 +382,8 @@ module Plomada
                      'overhang' => opts['overhang'], 'slab' => opts['slab'],
                      'slab_thickness' => opts['slab_thickness'], 'roof_thickness' => opts['roof_thickness'],
                      'pitch' => opts['pitch'] }
+        settings['elevation_mode'] = 'explicit' if opts['elevation_mode'] == 'explicit'
+        settings['floor_to_floor'] = opts['floor_to_floor'] if opts['floor_to_floor']
         SU.set_attrs(group, 'storey_settings' => JSON.generate(settings))
         finishes = state[:finishes] || {}
         Edit.apply_finishes(group, finishes) unless finishes.empty?
