@@ -362,6 +362,9 @@ module Plomada
           'stairs' => of_kind.call(Sketchup::Group, 'stair').map { |g| SU.record(g) }.compact,
           'furniture' => of_kind.call(Sketchup::ComponentInstance, 'furniture').map { |i| SU.record(i) }.compact,
           'slabs' => Slabs.stored_records(model, storey),
+          **Plan::EXTRA_KINDS.reject { |key, _| key == 'slabs' }.to_h do |key, kind|
+            [key, of_kind.call(Sketchup::Group, kind).map { |g| SU.record(g) }.compact]
+          end,
           'storey' => storey_settings(model, storey),
           'storeys' => Storeys.list(model)
         }

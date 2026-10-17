@@ -6,6 +6,8 @@ require_relative 'builders'
 require_relative 'storeys'
 require_relative 'library'
 require_relative 'site'
+require_relative 'railings'
+require_relative 'planters'
 require_relative '../plan'
 require_relative '../jobs'
 require_relative '../geometry'
@@ -109,7 +111,8 @@ module Plomada
           [st, lay]
         end
         { plan: plan, buildings: Geometry.building_plans(plan['walls'], plan['openings']), stairs: stairs,
-          furniture: known, library: library, warnings: warnings, height: height }
+          furniture: known, library: library, warnings: warnings, height: height,
+          library_dir: opts['library'] && Library.map(opts['library']) ? opts['library'] : nil }
       end
 
       # One job step per building: the wall solve is the costly part, and a
@@ -277,10 +280,25 @@ module Plomada
             batch.each { |f| Furniture.place(model, f, library: prep[:library]) }
           }]
         end
+        units.concat(part_units(model, plan, prep, state, storey))
         units.concat(site_units(model, plan['site'], prep, opts, state))
         units << ['raise to storey', -> { Storeys.stamp_and_lift(model, state[:before], storey, state[:elevation]) }]
         units << ['view', -> { View.fit(model) if opts['fit_view'] }]
         units
+      end
+
+      # The 0.5 parts, one step each: railings and planters stand on the slab
+      # they name (or the storey floor).
+      def part_units(model, plan, prep, state, storey)
+        footing = Footing.of(plan)
+        units = plan['railings'].map do |r|
+          ["railing #{r['id']}", -> { state[:groups] << Railings.build(model, storey, r, footing).name }]
+        end
+        units + plan['planters'].map do |r|
+          ["planter #{r['id']}", lambda {
+            state[:groups] << Planters.build(model, storey, r, footing, prep[:library_dir], prep[:warnings]).name
+          }]
+        end
       end
 
       # The site stands on the terrain, so only the storey closest to the

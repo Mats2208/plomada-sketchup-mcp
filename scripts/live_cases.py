@@ -99,6 +99,26 @@ CASES: dict[str, dict[str, Any]] = {
     },
 }
 
+BALCONY_EDGE = [[16100, 1000], [16100, 5000, Q], [10000, 11100]]
+CASES["balcony"] = {
+    "plan": {
+        **CASES["slabs"]["plan"],
+        "railings": [
+            {"id": "BR1", "path": BALCONY_EDGE, "on": "B1", "style": "glass"},
+            {"id": "BR2", "path": [[-100, -100], [7000, -100]], "on": "L1", "style": "bars"},
+        ],
+        "planters": [
+            {
+                "id": "J1",
+                "outline": [[1000, 1000], [5000, 1000, 0.3], [5000, 3000], [1000, 3000]],
+                "on": "L1",
+                "plants": {"keys": ["ARBUSTO", "MACETA"], "spacing": 700},
+            }
+        ],
+    },
+    "options": {"roof": "none", "library": "C:/mcp/biblioteca"},
+}
+
 
 async def run(case: str, capture: str | None) -> None:
     spec = CASES[case]
