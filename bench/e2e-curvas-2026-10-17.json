@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-17T17:35:57",
+  "checks": {
+    "29 tools": true,
+    "talking to the dev instance on 7884": true,
+    "quarter wall R 2000 manifold": true,
+    "zero internal faces": true,
+    "1500 window as 2 flat panels": true,
+    "get_plan keeps the bulge": true,
+    "get_plan reads one opening record for two panels": true,
+    "DXF route builds the same walls": true,
+    "slab record with a curved outline and a band": true,
+    "band group built": true
+  },
+  "tool_count": 29,
+  "status": {
+    "server_version": "0.4.0",
+    "bridge_version": "0.4.0",
+    "sketchup_version": "25.0.571"
+  },
+  "quarter_build_s": 0.278,
+  "quarter": {
+    "wall_faces": 44,
+    "manifold": true,
+    "internal_faces_removed": 0,
+    "warnings": []
+  },
+  "quarter_detail": {
+    "walls": [
+      {
+        "name": "N00_muros",
+        "storey": "N00",
+        "manifold": true,
+        "faces": 44,
+        "internal_faces": 0
+      }
+    ],
+    "windows": 2,
+    "glass_panes": 2
+  },
+  "capture_bytes": 29369,
+  "write_plan_dxf": {
+    "entities": 5,
+    "records": 3,
+    "layers": [
+      "A-WALL-E-N",
+      "A-WIND-E-N",
+      "PLOMADA-MURO-200",
+      "PLOMADA-PLANTA"
+    ]
+  },
+  "add_slab": {
+    "storey": "N00",
+    "slab": "B1",
+    "slabs": [
+      "B1"
+    ],
+    "groups": [
+      "N00_losa"
+    ],
+    "stair_wells": 0,
+    "warnings": [],
+    "job_id": "j6",
+    "steps": 2,
+    "elapsed_ms": 31.9,
+    "max_step_ms": 1.1
+  },
+  "set_slab": {
+    "storey": "N00",
+    "slab": "B1",
+    "slabs": [
+      "B1"
+    ],
+    "groups": [
+      "N00_losa",
+      "N00_canto_B1"
+    ],
+    "stair_wells": 0,
+    "warnings": [],
+    "job_id": "j7",
+    "steps": 2,
+    "elapsed_ms": 32.5,
+    "max_step_ms": 2.2
+  },
+  "capture_slab_bytes": 33111,
+  "passed": true
+}
