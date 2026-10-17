@@ -112,4 +112,24 @@ class TestGeometrySlabs < Minitest::Test
     assert_equal 2, region.size
     region.each { |r| assert_equal 4, r[:outer].size }
   end
+
+  # Real slab edges close with 6 mm snap chords next to arcs; pieces that short must still chain.
+  def test_the_boolean_keeps_edges_shorter_than_its_probe
+    tiny = [[0.0, 0.0], [5000.0, 0.0], [5000.0, 3000.0], [2000.06, 3000.0], [2000.0, 3000.0], [0.0, 3000.0]]
+    region = G::Boolean.region([{ outer: tiny }], [rect(1000.0, 1000.0, 2000.0, 2000.0)])
+    assert_equal 1, region.size
+    assert_in_delta 15_000_000.0 - 1_000_000.0, region_area(region), 1.0
+  end
+
+  def test_growing_a_ring_with_a_6_mm_chord_by_booleans_stays_sound
+    out = [[0.0, 0.0], [4000.0, 0.0, Q], [8000.0, 4000.0], [8000.0, 8000.0], [6.0, 8000.0], [0.0, 8000.0]]
+    ring = G.slab_shape(slab('L1', out))[:outer]
+    inner = G.grown(ring, -150.0)
+    assert_equal 1, inner.size
+    outer = G.grown(ring, 150.0)
+    assert_operator region_area(outer), :>, G.signed_area(ring)
+    assert_operator region_area(inner), :<, G.signed_area(ring)
+    band = G.slab_layout([slab('L1', out, edge_band: { 'height' => 300.0, 'depth' => 150.0 })])[:bands].first
+    assert closed?(band[:faces])
+  end
 end

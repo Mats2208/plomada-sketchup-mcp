@@ -114,6 +114,7 @@ module Plomada
     planter_spacing_mm: 600.0,             # mm, Poisson-disk radius between plants
     planter_attempts: 30,                  # candidates per active sample (Bridson's k)
     plant_massing_mm: 600.0,               # mm, diameter of the sphere standing in for a missing plant
+    plant_max_faces: 50_000,               # faces; a heavier library plant is replaced by the massing sphere
 
     # --- columns (tag Estructura) --------------------------------------------------
     column_min_sides: 16,                  # sides of a round column, at least

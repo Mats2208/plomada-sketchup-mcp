@@ -395,7 +395,8 @@ module Plomada
         il = intersect(e.seg, :l, v, side, e.point)
         ir = intersect(e.seg, :r, v, side, e.point)
         unless il && ir
-          raise InvalidParams, "wall #{e.seg.id} ends at #{Geometry.fmt_pt(e.point)} inside wall #{v.id} but its faces "                                "never reach the #{side == :l ? 'left' : 'right'} face of #{v.label}"
+          raise InvalidParams, "wall #{e.seg.id} ends at #{Geometry.fmt_pt(e.point)} inside wall #{v.id} but its faces " \
+                               "never reach the #{side == :l ? 'left' : 'right'} face of #{v.label}"
         end
 
         set_cut(e, { l: il[0], r: ir[0] }, :tee, v.id)
@@ -618,7 +619,9 @@ module Plomada
         limit = @cfg[:opening_panel_max_sagitta_mm]
         if sag > limit + 1e-6
           fit = (2.0 * Math.acos(1.0 - (limit / mid_r)) * seg.arc[:r]).floor
-          raise InvalidParams, "opening #{o['id']} on #{seg.label}: a #{Geometry.fmt(step.round(1))} mm panel bows "                                "#{Geometry.fmt(sag.round(1))} mm off its chord at radius #{Geometry.fmt(mid_r.round(1))} mm; "                                "the most is #{Geometry.fmt(limit)} mm, so set panel_width to #{fit} mm or less"
+          raise InvalidParams, "opening #{o['id']} on #{seg.label}: a #{Geometry.fmt(step.round(1))} mm panel bows " \
+                               "#{Geometry.fmt(sag.round(1))} mm off its chord at radius #{Geometry.fmt(mid_r.round(1))} mm; " \
+                               "the most is #{Geometry.fmt(limit)} mm, so set panel_width to #{fit} mm or less"
         end
 
         (0...count).map { |k| [s0 + (step * k), k == count - 1 ? s1 : s0 + (step * (k + 1))] }

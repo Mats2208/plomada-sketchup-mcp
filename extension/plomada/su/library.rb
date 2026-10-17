@@ -75,6 +75,21 @@ module Plomada
         defn
       end
 
+      # Faces in a definition, nested groups and components included; counted
+      # once and kept on the definition.
+      def face_count(defn)
+        cached = defn.get_attribute(DICT, 'face_count')
+        return cached if cached
+
+        count = ->(ents) do
+          ents.grep(Sketchup::Face).size + ents.grep(Sketchup::Group).sum { |g| count.call(g.entities) } +
+            ents.grep(Sketchup::ComponentInstance).sum { |i| count.call(i.definition.entities) }
+        end
+        n = count.call(defn.entities)
+        defn.set_attribute(DICT, 'face_count', n)
+        n
+      end
+
       # Erases what is not the object itself from a freshly loaded definition.
       def clean(defn)
         junk = defn.entities.select { |e| e.hidden? || NOT_GEOMETRY.any? { |k| e.is_a?(k) } }

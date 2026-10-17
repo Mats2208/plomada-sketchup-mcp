@@ -30,10 +30,11 @@ module Plomada
           q = pool[b]
           d = Geometry.sub(q, p)
           len = Geometry.norm(d)
-          next if len <= probe * 2
+          next if len <= 1e-9
 
+          # A piece shorter than the probe is probed a quarter of its length off.
           mid = Geometry.scale(Geometry.add(p, q), 0.5)
-          n = Geometry.scale(Geometry.left_normal(d), probe / len)
+          n = Geometry.scale(Geometry.left_normal(d), [probe, len / 4.0].min / len)
           left = inside?(Geometry.add(mid, n), shapes, cuts)
           right = inside?(Geometry.sub(mid, n), shapes, cuts)
           next if left == right
@@ -197,7 +198,8 @@ module Plomada
       end
 
       def assemble(loops, pool)
-        rings = loops.map { |l| l.map { |i| pool[i] } }
+        # Pieces split where edges cross can leave vertices microns apart; they carry no shape.
+        rings = loops.map { |l| Geometry.dedupe_ring(l.map { |i| pool[i] }, 0.05) }.select { |r| r.size >= 3 }
         outers, holes = rings.partition { |r| Geometry.signed_area(r).positive? }
         result = outers.sort_by { |r| -Geometry.signed_area(r) }.map { |r| { outer: r, holes: [] } }
         holes.each do |h|

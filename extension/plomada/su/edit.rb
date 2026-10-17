@@ -213,7 +213,8 @@ module Plomada
         old = existing.find { |r| r['id'] == id }
         unless old
           ids = existing.map { |r| r['id'] }
-          raise InvalidParams, "id names slab #{id.inspect}, which is not on storey #{storey}; "                                "its slab records are #{ids.empty? ? 'none (add_slab with an id makes one)' : ids.join(', ')}"
+          raise InvalidParams, "id names slab #{id.inspect}, which is not on storey #{storey}; " \
+                               "its slab records are #{ids.empty? ? 'none (add_slab with an id makes one)' : ids.join(', ')}"
         end
 
         settings = PlanReader.storey_settings(model, storey)

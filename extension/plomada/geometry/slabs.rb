@@ -55,25 +55,48 @@ module Plomada
     def edge_band(slab, shapes, same_top, config = CONFIG)
       band = slab['edge_band']
       outer = shapes[slab['id']][:outer]
-      inner = begin
-        offset_polygon(outer, -band['depth'])
-      rescue ArgumentError
-        return nil
-      end
-      return nil if signed_area(inner) <= 0.0
+      inner = grown(outer, -band['depth']).map { |r| r[:outer] }
+      return nil if inner.empty?
 
-      others = same_top.reject { |s| s['id'] == slab['id'] }.map do |s|
-        offset_polygon(shapes[s['id']][:outer], band['depth'])
-      rescue ArgumentError
-        shapes[s['id']][:outer]
+      others = same_top.reject { |s| s['id'] == slab['id'] }.flat_map do |s|
+        grown(shapes[s['id']][:outer], band['depth']).map { |r| r[:outer] }
       end
-      region = Boolean.region([{ outer: outer, holes: [] }], [inner] + others)
+      region = Boolean.region([{ outer: outer, holes: [] }], inner + others)
       return nil if region.empty?
 
       top = slab['top_offset'] - slab['thickness']
       bottom = top - band['height']
       { id: slab['id'], top: top, bottom: bottom, region: region,
         faces: region.flat_map { |r| region_prism(r[:outer], r[:holes], bottom, top) } }
+    end
+
+    # A counter-clockwise ring grown outward by +d+ (inward when negative) as
+    # a region, by booleans rather than mitred offsets: a strip d wide on
+    # every edge and a disc at every corner that needs one, added (outward)
+    # or cut away (inward). Tiny edges and near-reversals, which make a mitred
+    # offset spike, cost nothing here; corners come out rounded.
+    def grown(ring, d, sides = 12)
+      inward = d.negative?
+      w = d.abs
+      strips = ring.each_index.map do |i|
+        p = ring[i]
+        q = ring[(i + 1) % ring.size]
+        len = dist(p, q)
+        next nil if len < 1e-6
+
+        n = scale(left_normal(scale(sub(q, p), 1.0 / len)), inward ? w : -w)
+        [p, q, add(q, n), add(p, n)]
+      end.compact
+      discs = ring.each_index.filter_map do |i|
+        turn = cross(sub(ring[i], ring[i - 1]), sub(ring[(i + 1) % ring.size], ring[i]))
+        next unless inward ? turn.negative? : turn.positive?
+
+        (0...sides).map { |k| add(ring[i], [w * Math.cos(2 * Math::PI * k / sides), w * Math.sin(2 * Math::PI * k / sides)]) }
+      end
+      cutters = strips + discs
+      return Boolean.region([{ outer: ring, holes: [] }], cutters) if inward
+
+      Boolean.region([{ outer: ring, holes: [] }] + cutters.map { |c| { outer: c, holes: [] } })
     end
 
     # The closed prism of a region ring (counter-clockwise) with clockwise

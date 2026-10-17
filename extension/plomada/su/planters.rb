@@ -27,21 +27,38 @@ module Plomada
         SU.add_faces(soil.entities, SU.faces_from_loops(lay[:soil]), always_build: true)
         SU.soften(soil.entities)
         missing = []
+        heavy = {}
         lay[:plants].each do |pl|
           entry = library && Library.entry(library, 'sitio', Site.key_for(pl[:key]))
-          if entry
+          if entry && light?(model, entry, pl[:key], heavy)
             inst = Library.place(model, g.entities, entry, pl[:at], pl[:rotation], pl[:z])
             inst.name = "planta_#{pl[:key]}"
           else
-            missing << pl[:key]
+            missing << pl[:key] unless heavy.key?(pl[:key])
             g.entities.add_instance(massing(model), Geom::Transformation.translation(SU.pt(pl[:at] + [pl[:z]])))
           end
         end
         unless missing.empty?
           warnings << "planter #{rec['id']}: no library component for #{missing.uniq.join(', ')}; massing spheres used"
         end
+        heavy.each do |key, faces|
+          warnings << "planter #{rec['id']}: the library #{key} has #{faces} faces (over plant_max_faces " \
+                      "#{CONFIG[:plant_max_faces]}); massing spheres used"
+        end
         SU.set_attrs(g, 'kind' => 'planter', 'id' => rec['id'], 'storey' => storey, 'plants' => lay[:plants].size,
                         'record' => JSON.generate({ 'v' => 1, 'kind' => 'planter' }.merge(rec)))
+      end
+
+      # A library plant light enough to repeat across a planter; a heavier one
+      # is noted in +heavy+ and stands in as a massing sphere.
+      def light?(model, entry, key, heavy)
+        return false if heavy.key?(key)
+
+        faces = Library.face_count(Library.definition(model, entry[:path], entry[:part]))
+        return true if faces <= CONFIG[:plant_max_faces]
+
+        heavy[key] = faces
+        false
       end
 
       # One shared definition for every massing plant: a sphere of
