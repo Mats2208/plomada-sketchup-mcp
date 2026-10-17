@@ -111,7 +111,9 @@ module Plomada
         end
         stairs = plan['stairs'].map do |st|
           lay = Geometry.stair_layout(st)
-          warnings.concat(stair_warnings(st, lay, height + opts['slab_thickness']))
+          # The slab above is the next storey's: with slab records, take this storey's as its measure.
+          slab = plan['slabs'].empty? ? opts['slab_thickness'] : plan['slabs'].map { |s| s['thickness'] }.max
+          warnings.concat(stair_warnings(st, lay, height + slab))
           [st, lay]
         end
         { plan: plan, buildings: Geometry.building_plans(plan['walls'], Geometry.wall_openings(plan, height)), stairs: stairs,
