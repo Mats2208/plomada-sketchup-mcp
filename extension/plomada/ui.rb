@@ -21,7 +21,8 @@ module Plomada
       <h1>Plomada <span id="ver" class="muted"></span></h1>
       <div id="state" class="muted"></div>
       <div class="row">
-        <div><label>Port (1024-65535)</label><input id="port" type="number" min="1024" max="65535"></div>
+        <div><label>Port (1024-65535)</label><input id="port" type="number" min="1024" max="65535">
+          <span id="portnote" class="muted"></span></div>
         <div><label>Busy tick, ms (10-200)</label><input id="tick" type="number" min="10" max="200"></div>
       </div>
       <label>Token file</label><code id="token"></code>
@@ -36,6 +37,8 @@ module Plomada
           document.getElementById('ver').textContent=d.version;
           document.getElementById('state').textContent=d.state;
           document.getElementById('port').value=d.port;
+          document.getElementById('port').disabled=d.port_from_env;
+          document.getElementById('portnote').textContent=d.port_from_env?'from PLOMADA_PORT':'';
           document.getElementById('tick').value=d.tick_ms;
           document.getElementById('token').textContent=d.token_path;
           document.getElementById('ruby').checked=d.allow_ruby;
@@ -78,7 +81,8 @@ module Plomada
                 "not running#{App.last_error ? ": #{App.last_error}" : ''}"
               end
       {
-        'version' => VERSION, 'state' => state, 'port' => settings.port, 'tick_ms' => settings.tick_ms,
+        'version' => VERSION, 'state' => state, 'port' => settings.port,
+        'port_from_env' => settings.port_from_env?, 'tick_ms' => settings.tick_ms,
         'allow_ruby' => settings.allow_ruby?, 'token_path' => Paths.token_path,
         'max_tick_ms' => server ? server.max_tick_ms.round(1) : '-',
         'audit' => App.audit.tail(CONFIG[:audit_dialog_lines]), 'message' => message

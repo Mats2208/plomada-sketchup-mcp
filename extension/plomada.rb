@@ -3,12 +3,21 @@
 # Plomada: a Model Context Protocol bridge for SketchUp that models
 # architecture from AutoCAD MCP Pro plans. This loader only registers the
 # extension; everything else lives in the plomada/ folder.
+#
+# PLOMADA_DEV_DIR names another folder holding main.rb (a git worktree's
+# extension/plomada); when it is set and valid, the extension loads from there
+# instead of Plugins\plomada. Unset, nothing changes.
 require 'sketchup.rb'
 require 'extensions.rb'
-require_relative 'plomada/version'
 
 module Plomada
-  PLUGIN_DIR = File.join(__dir__, 'plomada').tr('\\', '/')
+  dev_dir = ENV['PLOMADA_DEV_DIR'].to_s.tr('\\', '/')
+  PLUGIN_DIR = if !dev_dir.empty? && File.file?(File.join(dev_dir, 'main.rb'))
+                 File.expand_path(dev_dir)
+               else
+                 File.join(__dir__, 'plomada').tr('\\', '/')
+               end
+  require File.join(PLUGIN_DIR, 'version')
 
   unless file_loaded?(__FILE__)
     extension = SketchupExtension.new(EXTENSION_NAME, File.join(PLUGIN_DIR, 'main'))

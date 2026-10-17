@@ -80,10 +80,10 @@ module Plomada
         puts "[Plomada] could not write #{Paths.endpoint_path}: #{e.message}"
       end
 
-      # Development helper: reload every file and restart the server.
-      def reload!
+      # Development helper: reload every file and restart the server. Reads
+      # PLUGIN_DIR, which the loader points at PLOMADA_DEV_DIR when it is set.
+      def reload!(dir = defined?(PLUGIN_DIR) ? PLUGIN_DIR : __dir__)
         stop
-        dir = __dir__
         verbose = $VERBOSE
         $VERBOSE = nil
         files = Dir.glob(File.join(dir, '**', '*.rb')).sort
