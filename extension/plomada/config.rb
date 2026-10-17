@@ -71,10 +71,73 @@ module Plomada
     room_label_height_mm: 250.0,           # mm, letter height of the room labels
     builder_min_faces: 20,                 # faces; a step creating more uses Entities#build
 
+    # --- curves (Geometry::Arc; every curved element tessellates here) -----------
+    arc_chord_tol_mm: 5.0,                 # mm, largest sagitta of one facet
+    arc_min_facets: 4,                     # facets per arc, at least
+    arc_max_facets: 96,                    # facets per arc, at most
+    arc_min_offset_radius_mm: 50.0,        # mm; Arc.offset refuses a smaller concentric arc
+
+    # --- curved walls and their openings -----------------------------------------
+    wall_min_inner_radius_mm: 300.0,       # mm; an arc wall with a tighter inner face is refused
+    opening_panel_max_mm: 1200.0,          # mm, widest flat panel of a door or window on an arc
+    opening_panel_max_sagitta_mm: 60.0,    # mm a panel may bow off its chord at mid thickness
+
+    # --- storeys -----------------------------------------------------------------
+    elevation_min_mm: -10_000.0,           # mm, lowest explicit storey elevation
+    elevation_max_mm: 60_000.0,            # mm, highest explicit storey elevation
+    ground_level_mm: 0.0,                  # mm, default ground level of the site
+    site_snap_mm: 1500.0,                  # mm; the site goes on the storey this close to ground level
+
+    # --- slabs -------------------------------------------------------------------
+    slab_top_offset_max_mm: 2000.0,        # mm, largest step of a slab top off the storey floor
+    boolean_probe_mm: 0.05,                # mm, side probe that classifies edges in slab unions
+
+    # --- railings (tag Barandas) -------------------------------------------------
+    railing_height_mm: 1100.0,             # mm, top of the railing above its base
+    railing_inset_mm: 50.0,                # mm from the path toward the slab
+    railing_glass_mm: 12.0,                # mm, glass panel thickness
+    railing_panel_max_mm: 1500.0,          # mm, widest glass panel
+    railing_rail_mm: 50.0,                 # mm, square top rail of a glass railing (rail: true)
+    railing_post_spacing_mm: 1200.0,       # mm, largest gap between posts of a bars railing
+    railing_post_diameter_mm: 40.0,        # mm, round post
+    railing_handrail_diameter_mm: 50.0,    # mm, round handrail on the posts
+    railing_baluster_diameter_mm: 16.0,    # mm, round baluster
+    railing_baluster_gap_mm: 110.0,        # mm, clear gap between balusters
+    railing_round_sides: 12,               # sides of posts, handrails and balusters
+    railing_solid_mm: 150.0,               # mm, thickness of a solid parapet
+
+    # --- planters (tag Entorno) ----------------------------------------------------
+    planter_curb_mm: 100.0,                # mm, curb thickness
+    planter_height_mm: 450.0,              # mm, curb top above the planter's base
+    planter_soil_mm: 400.0,                # mm, soil top above the planter's base
+    planter_spacing_mm: 600.0,             # mm, Poisson-disk radius between plants
+    planter_attempts: 30,                  # candidates per active sample (Bridson's k)
+    plant_massing_mm: 600.0,               # mm, diameter of the sphere standing in for a missing plant
+
+    # --- columns (tag Estructura) --------------------------------------------------
+    column_min_sides: 16,                  # sides of a round column, at least
+    column_max_sides: 48,                  # sides of a round column, at most
+
+    # --- curtain walls (tag Carpinterias) --------------------------------------------
+    curtain_mullion_spacing_mm: 1200.0,    # mm, largest gap between mullions
+    curtain_profile_mm: [50.0, 100.0],     # mm, mullion and transom section: face width x depth
+    curtain_glass_mm: 10.0,                # mm, glass thickness
+
+    # --- pools ---------------------------------------------------------------------
+    pool_depth_mm: 1400.0,                 # mm, water depth
+    pool_coping_mm: 300.0,                 # mm, coping width
+    pool_raised_wall_mm: 200.0,            # mm, wall of a raised basin
+
+    # --- ramps -----------------------------------------------------------------------
+    ramp_max_slope: 0.20,                  # rise over run; steeper ramps are refused
+    ramp_thickness_mm: 200.0,              # mm, ramp slab under its top surface
+    ramp_wall_height_mm: 900.0,            # mm, side wall above the ramp surface
+    ramp_wall_mm: 150.0,                   # mm, side wall thickness
+
     # --- model vocabulary ------------------------------------------------------
     dictionary: 'plomada',                 # attribute dictionary on everything Plomada makes
     storey_prefix: 'N00',                  # prefix of the storey groups
-    tags: %w[Muros Carpinterias Losas Escaleras Ambientes Mobiliario Entorno Referencia_CAD],
+    tags: %w[Muros Carpinterias Losas Escaleras Ambientes Mobiliario Entorno Referencia_CAD Barandas Estructura],
     materials: {                           # name => [r, g, b] (0-255) and alpha (0-1)
       'MAT_hormigon' => [[150, 150, 146], 1.0],
       'MAT_revoque_blanco' => [[242, 240, 235], 1.0],
@@ -88,7 +151,10 @@ module Plomada
       'MAT_sanitario' => [[248, 248, 246], 1.0],
       'MAT_pavimento' => [[176, 172, 164], 1.0],
       'MAT_agua' => [[70, 150, 190], 0.6],
-      'MAT_porton' => [[205, 205, 200], 1.0]
+      'MAT_porton' => [[205, 205, 200], 1.0],
+      'MAT_borde' => [[226, 222, 212], 1.0],
+      'MAT_tierra' => [[96, 72, 52], 1.0],
+      'MAT_vegetacion' => [[74, 118, 58], 1.0]
     },
     pbr: {                                 # applied only when the PBR API exists
       'MAT_metal' => { metallic: 1.0 },    # metallic factor, 0-1
