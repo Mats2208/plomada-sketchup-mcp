@@ -80,17 +80,20 @@ async def run() -> dict[str, Any]:
         checks["29 tools"] = report["tool_count"] == 29
         st = structured(await client.call_tool("status", {}))
         report["status"] = {k: st.get(k) for k in ("server_version", "bridge_version", "sketchup_version")}
-        checks["talking to the dev instance on 7884"] = endpoint["port"] == DEV_PORT and st.get("pid", endpoint["pid"]) == endpoint["pid"]
+        same_pid = st.get("pid", endpoint["pid"]) == endpoint["pid"]
+        checks["talking to the dev instance on 7884"] = endpoint["port"] == DEV_PORT and same_pid
 
         structured(await client.call_tool("reset_plomada", {}))
         t0 = time.perf_counter()
         build = structured(
-            await client.call_tool("build_plan", {"plan": QUARTER, "slab": False, "roof": "none", "furniture": "massing"})
+            await client.call_tool(
+                "build_plan", {"plan": QUARTER, "slab": False, "roof": "none", "furniture": "massing"}
+            )
         )
         report["quarter_build_s"] = round(time.perf_counter() - t0, 3)
         report["quarter"] = {k: build.get(k) for k in ("wall_faces", "manifold", "internal_faces_removed", "warnings")}
         info = structured(await client.call_tool("model_info", {"detail": True}))["detail"]
-        report["quarter_detail"] = {"walls": info["walls"], "windows": info["windows"], "glass_panes": info["glass_panes"]}
+        report["quarter_detail"] = {k: info[k] for k in ("walls", "windows", "glass_panes")}
         checks["quarter wall R 2000 manifold"] = all(w["manifold"] for w in info["walls"])
         checks["zero internal faces"] = all(w["internal_faces"] == 0 for w in info["walls"])
         checks["1500 window as 2 flat panels"] = info["windows"] == 2 and info["glass_panes"] == 2
@@ -119,7 +122,8 @@ async def run() -> dict[str, Any]:
         plan = structured(await client.call_tool("get_plan", {}))
         slabs = plan.get("slabs", [])
         checks["slab record with a curved outline and a band"] = (
-            len(slabs) == 1 and slabs[0]["edge_band"] == {"height": 450.0, "depth": 150.0}
+            len(slabs) == 1
+            and slabs[0]["edge_band"] == {"height": 450.0, "depth": 150.0}
             and any(len(v) == 3 for v in slabs[0]["outline"])
         )
         checks["band group built"] = any(g.startswith("N00_canto_B1") for g in band.get("groups", []))

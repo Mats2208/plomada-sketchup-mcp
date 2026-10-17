@@ -19,8 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import dev  # noqa: E402
-from plomada_bridge.dxf import read_plan  # noqa: E402
+import dev
+from plomada_bridge.dxf import read_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "casa_completa_N00.dxf"
@@ -36,9 +36,12 @@ count = lambda do |ents|
   ents.grep(Sketchup::ComponentInstance).each { |i| a, b = count.call(i.definition.entities); f += a; e += b }
   [f, e]
 end
-groups = m.entities.select { |x| (x.is_a?(Sketchup::Group) || x.is_a?(Sketchup::ComponentInstance)) && x.attribute_dictionary('plomada') }
-rows = groups.map { |g| ents = g.is_a?(Sketchup::Group) ? g.entities : g.definition.entities; [g.name, *count.call(ents), box.call(g.bounds)] }
-{ 'version' => Plomada::VERSION, 'groups' => rows.sort_by { |r| [r[0], r[3].inspect] }, 'model_bbox' => box.call(m.bounds) }.to_json
+top = [Sketchup::Group, Sketchup::ComponentInstance]
+plomada = ->(x) { top.any? { |k| x.is_a?(k) } && x.attribute_dictionary('plomada') }
+inner = ->(g) { g.is_a?(Sketchup::Group) ? g.entities : g.definition.entities }
+rows = m.entities.select(&plomada).map { |g| [g.name, *count.call(inner.call(g)), box.call(g.bounds)] }
+rows = rows.sort_by { |r| [r[0], r[3].inspect] }
+{ 'version' => Plomada::VERSION, 'groups' => rows, 'model_bbox' => box.call(m.bounds) }.to_json
 """
 
 
@@ -68,8 +71,10 @@ def diff(a: str, b: str) -> int:
             same = False
             print(f"DIFF {key}:\n  {a}: {da[key]}\n  {b}: {db[key]}")
     faces = sum(g[1] for g in da["groups"]), sum(g[1] for g in db["groups"])
-    print(f"{a} {da['version']} vs {b} {db['version']}: faces {faces[0]} / {faces[1]}, bbox {da['model_bbox']} / "
-          f"{db['model_bbox']} -> {'IDENTICAL' if same else 'DIFFERENT'}")
+    print(
+        f"{a} {da['version']} vs {b} {db['version']}: faces {faces[0]} / {faces[1]}, bbox {da['model_bbox']} / "
+        f"{db['model_bbox']} -> {'IDENTICAL' if same else 'DIFFERENT'}"
+    )
     return 0 if same else 1
 
 
