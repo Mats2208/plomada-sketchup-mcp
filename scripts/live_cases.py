@@ -20,7 +20,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import dev  # noqa: E402
+import dev
 
 ROOT = Path(__file__).resolve().parents[1]
 Q = math.tan(math.pi / 8.0)  # bulge of a quarter circle

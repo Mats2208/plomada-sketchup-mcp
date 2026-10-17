@@ -22,8 +22,31 @@ from . import __version__
 from .config import BridgeConfig, load_config
 from .connection import SketchUpClient
 from .dxf import DxfPlanError, read_plan
+from .dxfwrite import write_plan
 from .errors import NOT_RESPONDING, BridgeError, NotResponding, describe
-from .models import DrawingSection, Furniture, Opening, Plan, Room, Site, Stair, Wall, describe_error
+from .models import (
+    ELEVATION_MAX_MM,
+    ELEVATION_MIN_MM,
+    SLAB_TOP_OFFSET_MAX_MM,
+    Column,
+    CurtainWall,
+    DrawingSection,
+    EdgeBand,
+    Furniture,
+    Opening,
+    Plan,
+    Planter,
+    Pool,
+    Railing,
+    Ramp,
+    Room,
+    Site,
+    Slab,
+    Stair,
+    Vertex,
+    Wall,
+    describe_error,
+)
 
 INSTRUCTIONS = """\
 Plomada models architecture inside a running SketchUp 2025 (Windows) from plans drawn by
@@ -40,9 +63,13 @@ SITIO_<NAME> blocks (ARBOL, PALMERA, PINO, ARBUSTO, MACETA, AUTO, SUV, PICKUP, R
 PARRILLA, MESA_JARDIN, PERSONA, FAROLA) and polylines on SITIO-PAVIMENTO, SITIO-DECK,
 SITIO-PILETA (closed) and SITIO-CERCO; then add_terrain lays the lawn around it all.
 For a drawing set (plans, elevations, sections, axonometrics) use export_drawings, never execute_ruby.
-Edit afterwards with move_opening, set_wall_height, add_wall, add_opening, add_slab, add_roof,
-set_material; they read the plan back from the model, never from the DXF, and take storey
+Edit afterwards with move_opening, set_wall_height, add_wall, add_opening, add_slab, set_slab,
+add_roof, set_material; they read the plan back from the model, never from the DXF, and take storey
 when the model has several.
+Curves: any polyline vertex (wall axis, outline, hole, path) may be [x, y, bulge], bulge = tan(sweep / 4),
+positive counter-clockwise, at most 1. Plans also hold slabs, columns, curtain_walls, railings, planters,
+pools, ramps and arched openings; elevation puts a storey at any height (SS below 0), ground_level_mm sets
+the ground. Route: author PlanInput JSON once -> build_plan -> write_plan_dxf + AutoCAD drawing_open.
 If a mutating call times out or the connection drops, its outcome is unknown: call get_plan or
 status before retrying. execute_ruby is off unless the user enables it in SketchUp.
 """
@@ -79,6 +106,23 @@ STYLE_HELP = (
     "shaded = materials and edges; hidden_line = visible edges only on white faces, the input for line or canny "
     "ControlNets; lines_only = wireframe, every edge including the hidden ones behind walls"
 )
+GroundLevel = Annotated[
+    float | None,
+    Field(
+        ge=ELEVATION_MIN_MM,
+        le=ELEVATION_MAX_MM,
+        description="mm of the ground the site and terrain sit on (stored in the model); default 0",
+    ),
+]
+Ring = list[Vertex]
+TopOffset = Annotated[
+    float | None,
+    Field(
+        ge=-SLAB_TOP_OFFSET_MAX_MM,
+        le=SLAB_TOP_OFFSET_MAX_MM,
+        description="mm of the slab top above the storey floor (a step down is negative)",
+    ),
+]
 StoreyName = Annotated[
     str | None,
     Field(
@@ -101,6 +145,16 @@ class PlanInput(BaseModel):
         list[Furniture], Field(default_factory=list, description="catalogue pieces: item, back-left corner, rotation")
     ]
     site: Annotated[Site, Field(default_factory=Site, description="site objects, paving, decks, pools, fences")]
+    slabs: Annotated[
+        list[Slab], Field(default_factory=list, description="slabs with holes; any slab replaces the automatic one")
+    ]
+    columns: Annotated[list[Column], Field(default_factory=list, description="round (at + diameter) or outline")]
+    curtain_walls: Annotated[list[CurtainWall], Field(default_factory=list, description="glazed walls on a path")]
+    railings: Annotated[list[Railing], Field(default_factory=list, description="glass, bars or solid, on a slab")]
+    planters: Annotated[list[Planter], Field(default_factory=list, description="curbed soil, planted from the library")]
+    pools: Annotated[list[Pool], Field(default_factory=list, description="recessed or raised pools, any storey")]
+    ramps: Annotated[list[Ramp], Field(default_factory=list, description="ramps from z_start to z_end, at most 20 %")]
+    site_on_ground: Annotated[bool, Field(description="place this plan's site at ground_level_mm itself")] = False
 
 
 class Bridge:
@@ -152,6 +206,7 @@ def build_options(
     elevation: float | None = None,
     library: str | None = None,
     furniture: str = "library",
+    ground_level_mm: float | None = None,
 ) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "furniture": furniture,
@@ -166,7 +221,25 @@ def build_options(
         opts["elevation"] = elevation
     if library is not None:
         opts["library"] = library
+    if ground_level_mm is not None:
+        opts["ground_level_mm"] = ground_level_mm
     return opts
+
+
+def slab_fields(**fields: Any) -> dict[str, Any]:
+    """The slab fields given (not None), as the extension takes them: rings as lists, edge_band false as null."""
+    out: dict[str, Any] = {}
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if key == "outline":
+            value = [list(p) for p in value]
+        elif key == "holes":
+            value = [[list(p) for p in ring] for ring in value]
+        elif key == "edge_band":
+            value = value.model_dump() if value is not False else None
+        out[key] = value
+    return out
 
 
 def with_storey(params: dict[str, Any], storey: str | None) -> dict[str, Any]:
@@ -315,6 +388,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             Literal["library", "massing"],
             Field(description="library: real 3D models from the component library where mapped; massing: simple boxes"),
         ] = "library",
+        ground_level_mm: GroundLevel = None,
         deadline_ms: DeadlineMs = cfg.default_deadline_ms,
     ) -> dict[str, Any]:
         """Builds the exact 3D house of an AutoCAD MCP Pro plan in one call and one undo step: manifold
@@ -329,7 +403,16 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         params = {
             "plan": parsed.plan.to_wire(),
             "options": build_options(
-                storey_height, slab, roof, overhang, replace, storey, elevation, library_path, furniture
+                storey_height,
+                slab,
+                roof,
+                overhang,
+                replace,
+                storey,
+                elevation,
+                library_path,
+                furniture,
+                ground_level_mm,
             ),
             "label": f"build from AutoCAD ({parsed.path.name})",
         }
@@ -342,7 +425,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
     @mcp.tool(annotations=_mut(destructive=True, idempotent=False))
     @exact_errors
     async def build_plan(
-        plan: Annotated[PlanInput, Field(description="walls, openings and rooms in mm")],
+        plan: Annotated[PlanInput, Field(description="walls, openings, rooms and the 0.5 records, in mm")],
         ctx: Context,
         storey_height: Annotated[
             float, Field(gt=0, le=10_000, description="storey and wall height, mm")
@@ -370,6 +453,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             Literal["library", "massing"],
             Field(description="library: real 3D models from the component library where mapped; massing: simple boxes"),
         ] = "library",
+        ground_level_mm: GroundLevel = None,
         deadline_ms: DeadlineMs = cfg.default_deadline_ms,
     ) -> dict[str, Any]:
         """Builds a house from plan JSON (the same records build_from_autocad reads from a DXF), as one undo step."""
@@ -377,12 +461,21 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             checked = Plan.model_validate(plan.model_dump())
         except ValidationError as exc:
             raise ToolError(
-                f"build_plan refused its input (-32004): plan.{describe_error(exc)}. Fix it and call again."
+                f"build_plan refused its input (-32004): {describe_error(exc, 'plan')}. Fix it and call again."
             ) from None
         params = {
             "plan": checked.to_wire(),
             "options": build_options(
-                storey_height, slab, roof, overhang, replace, storey, elevation, library_path, furniture
+                storey_height,
+                slab,
+                roof,
+                overhang,
+                replace,
+                storey,
+                elevation,
+                library_path,
+                furniture,
+                ground_level_mm,
             ),
         }
         return await b.mutate("build_plan", "build_plan", params, ctx, deadline_ms)
@@ -485,16 +578,49 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             float, Field(gt=0, le=2_000, description="mm; the top stays at z 0")
         ] = cfg.slab_thickness_mm,
         outline: Annotated[
-            list[tuple[Mm, Mm]] | None, Field(description="[[x, y], ...] mm; default the exterior wall's outer face")
+            Ring | None,
+            Field(description="[[x, y] or [x, y, bulge], ...] mm; default the exterior wall's outer face"),
+        ] = None,
+        storey: StoreyName = None,
+        id: Annotated[str | None, Field(min_length=1, description="slab id: a slab record next to the others")] = None,
+        holes: Annotated[list[Ring] | None, Field(description="rings cut through the slab, mm")] = None,
+        top_offset: TopOffset = None,
+        material: Annotated[str | None, Field(min_length=1, description="default MAT_piso_porcelanato")] = None,
+        edge_band: Annotated[EdgeBand | None, Field(description="downstand band on the outer edge, mm")] = None,
+    ) -> dict[str, Any]:
+        """Builds (or replaces) a storey's floor slab (N00_losa, N01_losa...) on tag Losas, with the wells of
+        the stairs that come up from the storey below. With an id it adds (or replaces) that slab record."""
+        fields = slab_fields(
+            outline=outline, id=id, holes=holes, top_offset=top_offset, material=material, edge_band=edge_band
+        )
+        return await b.mutate("add_slab", "add_slab", with_storey({"thickness": thickness, **fields}, storey), ctx)
+
+    @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
+    @exact_errors
+    async def set_slab(
+        id: Annotated[str, Field(min_length=1, description="slab id")],
+        ctx: Context,
+        outline: Annotated[Ring | None, Field(description="new outline [[x, y] or [x, y, bulge], ...], mm")] = None,
+        holes: Annotated[list[Ring] | None, Field(description="new holes (replace the old ones); [] for none")] = None,
+        thickness: Annotated[float | None, Field(gt=0, le=2_000, description="mm")] = None,
+        top_offset: TopOffset = None,
+        material: Annotated[str | None, Field(min_length=1, description="a Plomada material")] = None,
+        edge_band: Annotated[
+            EdgeBand | Literal[False] | None, Field(description="downstand band on the outer edge; false removes it")
         ] = None,
         storey: StoreyName = None,
     ) -> dict[str, Any]:
-        """Builds (or replaces) a storey's floor slab (N00_losa, N01_losa...) on tag Losas, with the wells of
-        the stairs that come up from the storey below."""
-        params: dict[str, Any] = {"thickness": thickness}
-        if outline is not None:
-            params["outline"] = [list(p) for p in outline]
-        return await b.mutate("add_slab", "add_slab", with_storey(params, storey), ctx)
+        """Changes one slab record (only the fields given) and rebuilds it, one undo step."""
+        fields = slab_fields(
+            outline=outline,
+            holes=holes,
+            thickness=thickness,
+            top_offset=top_offset,
+            material=material,
+            edge_band=edge_band,
+        )
+        params = {"id": id, **fields}
+        return await b.mutate("set_slab", "set_slab", with_storey(params, storey), ctx)
 
     @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
     @exact_errors
@@ -540,6 +666,36 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         return await b.mutate("set_material", "set_material", params, ctx)
 
     # --- scenes and exports -----------------------------------------------------------------
+
+    @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
+    @exact_errors
+    async def write_plan_dxf(
+        plan: Annotated[PlanInput, Field(description="the plan build_plan takes, in mm")],
+        path: Annotated[
+            str, Field(min_length=5, pattern=r"(?i)\.dxf$", description="output .dxf file; its folder is created")
+        ],
+        storey: Annotated[str, Field(pattern=STOREY_PATTERN, description="storey name, e.g. N00, N01, SS")] = "N00",
+        storey_height: Annotated[float, Field(gt=0, le=10_000, description="storey height, mm")] = cfg.storey_height_mm,
+        elevation: Annotated[
+            float | None,
+            Field(ge=ELEVATION_MIN_MM, le=ELEVATION_MAX_MM, description="mm of this storey's floor; default stacked"),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Writes the plan as a millimetre DXF for AutoCAD (open it with drawing_open): wall axes with real
+        arcs and both faces, slabs, columns, railings and the other records on PLOMADA-* layers, openings,
+        rooms and stairs as AutoCAD MCP Pro records, furniture and site blocks. build_from_autocad reads it
+        back exactly. Writes the file only; SketchUp is not involved."""
+        raw = {**plan.model_dump(), "storey": {"name": storey, "height": storey_height, "elevation": elevation}}
+        try:
+            checked = Plan.model_validate(raw)
+        except ValidationError as exc:
+            raise ToolError(
+                f"write_plan_dxf refused its input (-32004): {describe_error(exc, 'plan')}. Fix it and call again."
+            ) from None
+        try:
+            return await asyncio.to_thread(write_plan, checked, path)
+        except OSError as exc:
+            raise ToolError(f"write_plan_dxf could not write {path}: {exc.strerror or exc}") from None
 
     @mcp.tool(annotations=_mut(destructive=False, idempotent=True))
     @exact_errors
