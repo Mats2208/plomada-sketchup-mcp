@@ -119,15 +119,74 @@ CASES["balcony"] = {
     "options": {"roof": "none", "library": "C:/mcp/biblioteca"},
 }
 
+BOX = {"id": "EXT", "axis": [[0, 0], [12000, 0], [12000, 8000], [0, 8000]], "thickness": 250, "closed": True}
+CASES["storeys"] = {
+    "builds": [
+        {
+            "plan": {
+                "walls": [BOX],
+                "ramps": [
+                    {"id": "R1", "axis": [[3000, -9000], [3000, 0]], "width": 3000, "z_start": 1500, "z_end": 120}
+                ],
+            },
+            "options": {
+                "storey": "SS",
+                "elevation": -1500,
+                "storey_height": 2350,
+                "roof": "none",
+                "ground_level_mm": 0,
+            },
+        },
+        {
+            "plan": {
+                "walls": [{**BOX, "axis": [[0, 0], [12000, 0], [12000, 4000, Q], [8000, 8000], [0, 8000]]}],
+                "columns": [{"id": f"C{i}", "at": [2000 + 4000 * i, -2500], "diameter": 1000} for i in range(3)],
+                "slabs": [
+                    {
+                        "id": "L1",
+                        "outline": [[-125, -4000], [12125, -4000], [12125, 4000, Q], [8000, 8125], [-125, 8125]],
+                        "edge_band": {"height": 400, "depth": 150},
+                    }
+                ],
+                "stairs": [
+                    {
+                        "id": "S1",
+                        "start": [1000, 6000],
+                        "direction_deg": 0,
+                        "width": 1200,
+                        "risers": 26,
+                        "riser_height": 182.7,
+                        "going": 280,
+                    }
+                ],
+            },
+            "options": {"storey": "N00", "elevation": 1000, "storey_height": 4600, "roof": "none"},
+        },
+        {
+            "plan": {
+                "walls": [{**BOX, "axis": [[0, 0], [12000, 0], [12000, 4000, Q], [8000, 8000], [0, 8000]]}],
+                "slabs": [
+                    {"id": "L2", "outline": [[-125, -125], [12125, -125], [12125, 4000, Q], [8000, 8125], [-125, 8125]]}
+                ],
+                "pools": [{"id": "P1", "outline": [[2000, 1500], [7000, 1500], [7000, 4500], [2000, 4500]]}],
+                "railings": [{"id": "BR", "path": [[-125, -125], [12125, -125]], "on": "L2"}],
+            },
+            "options": {"storey": "N01", "elevation": 5750, "storey_height": 3100, "roof": "flat"},
+        },
+    ]
+}
+
 
 async def run(case: str, capture: str | None) -> None:
     spec = CASES[case]
     client = dev.dev_client()
     try:
         await dev.call(client, "reset_plomada", {})
-        opts = {"storey": "N00", "furniture": "massing", **spec.get("options", {})}
-        res = await dev.call(client, "build_plan", {"plan": spec["plan"], "options": opts})
-        print(json.dumps({k: res[k] for k in ("wall_faces", "manifold", "groups", "warnings", "elapsed_ms")}, indent=1))
+        for build in spec.get("builds", [spec]):
+            opts = {"storey": "N00", "furniture": "massing", **build.get("options", {})}
+            res = await dev.call(client, "build_plan", {"plan": build["plan"], "options": opts})
+            keys = ("storey", "elevation", "wall_faces", "manifold", "groups", "stair_wells", "warnings", "elapsed_ms")
+            print(json.dumps({k: res.get(k) for k in keys}))
         info = await dev.call(client, "model_info", {"detail": True})
         print(json.dumps(info["detail"]["walls"], indent=1))
         if capture:

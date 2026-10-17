@@ -8,6 +8,9 @@ require_relative 'library'
 require_relative 'site'
 require_relative 'railings'
 require_relative 'planters'
+require_relative 'columns'
+require_relative 'pools'
+require_relative 'ramps'
 require_relative '../plan'
 require_relative '../jobs'
 require_relative '../geometry'
@@ -287,17 +290,21 @@ module Plomada
         units
       end
 
-      # The 0.5 parts, one step each: railings and planters stand on the slab
-      # they name (or the storey floor).
+      # The 0.5 parts, one step each (columns eight at a time): railings,
+      # planters and pools stand on the slab they name (or the storey floor).
       def part_units(model, plan, prep, state, storey)
         footing = Footing.of(plan)
-        units = plan['railings'].map do |r|
-          ["railing #{r['id']}", -> { state[:groups] << Railings.build(model, storey, r, footing).name }]
+        add = ->(g) { state[:groups] << g.name }
+        units = plan['columns'].each_slice(8).map do |batch|
+          ["columns #{batch.map { |c| c['id'] }.join(', ')}", -> { batch.each { |c| add.call(Columns.build(model, storey, c, prep[:height])) } }]
         end
+        units += plan['ramps'].map { |r| ["ramp #{r['id']}", -> { add.call(Ramps.build(model, storey, r)) }] }
+        units += plan['pools'].map do |r|
+          ["pool #{r['id']}", -> { add.call(Pools.build(model, storey, r, footing, state[:site_ok])) }]
+        end
+        units += plan['railings'].map { |r| ["railing #{r['id']}", -> { add.call(Railings.build(model, storey, r, footing)) }] }
         units + plan['planters'].map do |r|
-          ["planter #{r['id']}", lambda {
-            state[:groups] << Planters.build(model, storey, r, footing, prep[:library_dir], prep[:warnings]).name
-          }]
+          ["planter #{r['id']}", -> { add.call(Planters.build(model, storey, r, footing, prep[:library_dir], prep[:warnings])) }]
         end
       end
 

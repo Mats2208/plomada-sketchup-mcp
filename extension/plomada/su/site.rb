@@ -73,7 +73,10 @@ module Plomada
 
       # Outer rings of the pools in the model, for the terrain's holes (mm, world plan).
       def pool_outlines(model)
-        model.entities.grep(Sketchup::Group).select { |g| g.valid? && SU.kind(g) == 'site' && g.get_attribute(DICT, 'site_kind') == 'pool' }
+        model.entities.grep(Sketchup::Group).select do |g|
+          g.valid? && ((SU.kind(g) == 'site' && g.get_attribute(DICT, 'site_kind') == 'pool') ||
+                       (SU.kind(g) == 'pool' && g.get_attribute(DICT, 'raised') == false))
+        end
              .map do |g|
                off = SU.to_mm(g.transformation.origin)
                JSON.parse(g.get_attribute(DICT, 'outline')).map { |p| [p[0] + off[0], p[1] + off[1]] }

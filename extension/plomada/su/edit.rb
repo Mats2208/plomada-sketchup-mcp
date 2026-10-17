@@ -6,6 +6,7 @@ require_relative 'builders'
 require_relative 'build'
 require_relative 'storeys'
 require_relative 'site'
+require_relative 'ramps'
 
 module Plomada
   module SU

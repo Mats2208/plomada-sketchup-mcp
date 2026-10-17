@@ -59,12 +59,12 @@ module Plomada
 
     # A pool sunk into the ground: {coping:, walls:, floor:, water:, outer:}.
     # +outer+ is the ring the terrain must leave open. Every part is closed.
-    def pool_parts(points, ground, depth)
+    def pool_parts(points, ground, depth, coping: POOL_COPING_MM)
       inner = ccw(points)
       raise InvalidParams, "pool depth must be greater than 0, got #{fmt_mm(depth)}" unless depth.positive?
 
       bottom = ground - depth
-      coping_out = offset_polygon(inner, POOL_COPING_MM)
+      coping_out = offset_polygon(inner, [coping, POOL_WALL_MM].max)
       wall_out = offset_polygon(inner, POOL_WALL_MM)
       water = ground - POOL_WATER_DROP_MM
       {
