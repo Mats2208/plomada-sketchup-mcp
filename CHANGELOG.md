@@ -4,6 +4,71 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-17
+
+CURVAS. One plan, written once, now builds a non-orthogonal building: curved walls with real openings, a curved slab
+edge on every storey with cantilevered balconies and their bands, glass railings, planters, round columns, curtain
+walls, arches, pools on any storey, ramps, a basement and free storey heights. The proof is a real student project,
+a student's hotel project, rebuilt from a DXF of it.
+
+### Added
+
+- **Curves everywhere a polyline goes.** Wall axes, slab outlines and holes, railing and curtain-wall paths, planters,
+  pools, ramps and site polygons take `[x, y, bulge]` vertices with the DXF convention; a bulge over 1 (more than a
+  semicircle) is refused naming the segment. One kernel, `Geometry::Arc`, tessellates every arc at a 5 mm chord
+  (4 to 96 facets), so elements that share an arc share its vertices.
+- **Curved walls with real openings.** An arc segment keeps the solver's (s, t) frame through polar coordinates;
+  joints intersect the offset curves (line-circle, circle-circle), a stem can tee into an arc, and the walls stay
+  manifold by construction. A door or window on an arc is split into flat panels no wider than 1200 mm that may bow
+  at most 60 mm; the facets of a curved face are soft and smooth.
+- **Slab records.** `slab` with holes, a top offset, a material and an `edge_band` fascia; the slabs at one level are
+  unioned by a new plane boolean (`Geometry::Boolean`), stair wells are cut, and the band runs only along the free
+  edge. New tool **`set_slab`**; `add_slab` takes ids, holes, bands and curves.
+- **Free storey elevations and a ground level.** Explicit elevations from -10 m to 60 m (basements, half levels, a
+  raised ground floor), `ground_level_mm` stored in the model, the site on the storey nearest it, the terrain at it
+  with holes for basements, ramps and pools, stair wells chosen by elevation.
+- **Railings** (glass panels per facet, posts and balusters within a 110 mm gap, solid parapets), **planters**
+  (curb, soil, Bridson Poisson-disk plants seeded by spacing and id), **columns** (round or any outline),
+  **curtain walls** (equal mullions, transoms, the void they cut in a wall), **arched openings** on straight runs
+  (the wall above the spring line built with the arch hole, arched frames and glass), **pools** on any storey
+  (recessed or a raised basin) and **ramps** (ruled, up to 20 %, sloped side walls). Tags `Barandas` and
+  `Estructura`, materials `MAT_borde`, `MAT_tierra`, `MAT_vegetacion`.
+- **The DXF route for 0.5.** Entities with XDATA app `PLOMADA` and the `PLOMADA-*` layers are read as 0.5 records,
+  SPLINE and ELLIPSE flattened at 5 mm. New tool **`write_plan_dxf`** writes a plan as a millimetre DXF with real
+  arcs that AutoCAD opens and `build_from_autocad` reads back to identical records.
+- **An isolated development SketchUp.** `PLOMADA_DEV_DIR` loads the extension from a checkout, `PLOMADA_PORT`
+  overrides the port for one process without touching the stored one, `scripts/sketchup-dev.cmd` starts it on 7884
+  with its own token folder; `scripts/dev.py`, `dev_restart.ps1` and `dev_open.ps1` drive it.
+- **The hotel benchmark** (kept private): measures the DXF read-only, writes one PlanInput per storey, settles the
+  walls against the solver, builds the six storeys and compares them with the drawing and the hand-made model.
+
+### Changed
+
+- `build_plan` and `build_from_autocad` take `ground_level_mm`; the plan's own storey may carry an explicit
+  elevation with a floor-to-floor height.
+- A library plant heavier than `plant_max_faces` (50 000) is shown as a massing sphere with a warning: the bundled
+  hedge has 537 600 faces, and a planter of them stalled SketchUp.
+- The stair check measures floor to floor with the plan's slab records when it has them.
+- Facets of curved slabs, bands, roofs, columns and paving are softened; a plan without curves solves byte for byte
+  as in 0.4.0.
+
+### Fixed
+
+- `Plomada::App.reload!` reloads from the folder the extension was loaded from.
+- The plane boolean keeps pieces shorter than its probe (a 6 mm closing chord left a slab ring open) and drops
+  vertices microns apart; bands are grown by booleans instead of mitred offsets, which spiked on tiny edges.
+
+### Measured
+
+- **a student's hotel project**, six storeys through the MCP tools: 20 of 20 features of the brief
+  expressible, slab IoU 0.9999 or better on every storey against the linework, the ten largest rooms within 2.54 %
+  of the drawing's, every wall group manifold with no internal face, **33.8 s** for the building and 0.2 s for the terrain.
+- **0.4 unchanged.** The solver gives byte-identical output for all six 0.4 fixtures, and `casa_completa_N00.dxf`
+  built in SketchUp by 0.4.0 and by 0.5 has 858 faces and the same bounding box in both.
+- **Live curves.** A quarter-circle wall of R 2000 with a 1500 mm window: 44 faces, manifold, two panels; the 0.5
+  e2e passes 10 of 10 checks.
+- **Tests.** 29 tools; 208 minitest and 76 pytest tests (92 new).
+
 ## [0.4.0] - 2026-10-08
 
 The 2D drawings of the model, as a tool. Until now they needed `execute_ruby`.
