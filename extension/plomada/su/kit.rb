@@ -116,8 +116,11 @@ module Plomada
     end
 
     # The opening component +id+, on +storey+ when one is named (else the first).
-    def find_opening(model, id, storey = nil)
-      model.entities.grep(Sketchup::ComponentInstance).find do |i|
+    def find_opening(model, id, storey = nil) = find_openings(model, id, storey).first
+
+    # Every component of opening +id+: one, or one per panel on a curved wall.
+    def find_openings(model, id, storey = nil)
+      model.entities.grep(Sketchup::ComponentInstance).select do |i|
         i.valid? && kind(i) == 'opening' && i.get_attribute(DICT, 'id') == id &&
           (storey.nil? || (i.get_attribute(DICT, 'storey') || CONFIG[:storey_prefix]) == storey)
       end

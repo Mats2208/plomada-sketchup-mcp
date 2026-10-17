@@ -25,8 +25,31 @@ module Plomada
           next unless face&.valid?
 
           SU.set_attrs(face, 'kind' => 'wall_face', 'wall' => record['id'], 'part' => f[:part], 'record' => json)
+          SU.set_attrs(face, 'segment' => f[:segment], 'curved' => true) if f[:curved]
         end
         created.size
+      end
+
+      # The vertical edges between two facets of one curved face (same wall,
+      # segment and side) become soft and smooth, so the arc shades as one
+      # surface; horizontal edges, jambs and segment joints stay hard.
+      def soften_curves(group)
+        count = 0
+        group.entities.grep(Sketchup::Edge).each do |e|
+          faces = e.faces
+          next unless faces.size == 2 && faces.all? { |f| f.get_attribute(DICT, 'curved') == true }
+
+          keys = faces.map { |f| %w[wall segment part].map { |k| f.get_attribute(DICT, k) } }
+          next unless keys[0] == keys[1]
+
+          v = e.end.position - e.start.position
+          next unless v.length.positive? && v.normalize.z.abs > 0.999
+
+          e.soft = true
+          e.smooth = true
+          count += 1
+        end
+        count
       end
 
       # strip_internal_faces: probes 1 mm either side of every face from a
@@ -125,6 +148,8 @@ module Plomada
         inst.layer = SU.tag(model, 'Carpinterias')
         SU.set_attrs(inst, 'kind' => 'opening', 'id' => frame[:id], 'wall' => frame[:wall],
                            'opening_kind' => frame[:kind], 'record' => JSON.generate(frame[:record]))
+        SU.set_attrs(inst, 'panel' => frame[:panel], 'panels' => frame[:panels]) if frame[:panels]
+        inst
       end
 
       # +elevation+ (mm): the storey the opening is on; frames are storey-local.
@@ -275,7 +300,9 @@ module Plomada
         of_kind = ->(cls, kind) { mine.select { |e| e.is_a?(cls) && SU.kind(e) == kind } }
         {
           'walls' => walls.values.compact,
-          'openings' => of_kind.call(Sketchup::ComponentInstance, 'opening').map { |i| SU.record(i) }.compact,
+          # An opening on an arc is one component per panel, all carrying the same record.
+          'openings' => of_kind.call(Sketchup::ComponentInstance, 'opening').map { |i| SU.record(i) }.compact
+                               .uniq { |r| r['id'] },
           'rooms' => of_kind.call(Sketchup::Group, 'room').map { |g| SU.record(g) }.compact,
           'stairs' => of_kind.call(Sketchup::Group, 'stair').map { |g| SU.record(g) }.compact,
           'furniture' => of_kind.call(Sketchup::ComponentInstance, 'furniture').map { |i| SU.record(i) }.compact,

@@ -337,6 +337,7 @@ module Plomada
         return unless group
 
         state[:removed] = Walls.strip_internal_faces(group, layout[:solids])
+        state[:softened] = Walls.soften_curves(group)
         state[:manifold] = group.manifold?
         settings = { 'name' => plan['storey']['name'], 'height' => height, 'roof' => opts['roof'],
                      'elevation' => opts['elevation'].to_f,

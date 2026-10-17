@@ -79,7 +79,10 @@ module Plomada
         [plan, units, state]
       end
 
-      def frame_of(state, id) = state[:layout][:openings].find { |f| f[:id] == id }
+      def frame_of(state, id) = frames_of(state, id).first
+
+      # Every frame of opening +id+: one, or one per panel on a curved wall.
+      def frames_of(state, id) = state[:layout][:openings].select { |f| f[:id] == id }
 
       def raise_unit(model, state, storey)
         ['raise to storey', -> { Storeys.stamp_and_lift(model, state[:before], storey, state[:elevation]) }]
@@ -120,7 +123,7 @@ module Plomada
         norm, units, state = rebuild(model, plan, storey)
         stored = norm['openings'].find { |o| o['id'] == rec['id'] }
         units << ["opening #{rec['id']}", lambda {
-          Openings.place(model, frame_of(state, rec['id']).merge(record: Build.opening_record(stored)))
+          frames_of(state, rec['id']).each { |f| Openings.place(model, f.merge(record: Build.opening_record(stored))) }
         }]
         units << raise_unit(model, state, storey)
         UnitJob.new('Plomada: add opening', units) { summary(state, storey).merge('opening' => rec['id']) }
@@ -135,15 +138,21 @@ module Plomada
         rec = plan['openings'].find { |o| o['id'] == id }
         raise InvalidParams, "id names opening #{id.inspect}, which is not on storey #{storey}" unless rec
 
-        inst = SU.find_opening(model, id, storey)
-        raise InvalidParams, "opening #{id} has a record but no component in the model; run build_plan again" unless inst
+        insts = SU.find_openings(model, id, storey)
+        raise InvalidParams, "opening #{id} has a record but no component in the model; run build_plan again" if insts.empty?
 
         rec['offset'] = offset
         norm, units, state = rebuild(model, plan, storey)
         stored = norm['openings'].find { |o| o['id'] == id }
         units << ["opening #{id}", lambda {
-          frame = frame_of(state, id)
-          Openings.move(model, inst, frame.merge(record: Build.opening_record(stored)), elevation: state[:elevation])
+          frames = frames_of(state, id).map { |f| f.merge(record: Build.opening_record(stored)) }
+          if frames.size == 1 && insts.size == 1
+            Openings.move(model, insts.first, frames.first, elevation: state[:elevation])
+          else
+            # Panels on a curve: their count and widths change with the offset, so they are placed anew.
+            model.entities.erase_entities(insts.select(&:valid?))
+            frames.each { |f| Openings.place(model, f) }
+          end
         }]
         units << raise_unit(model, state, storey)
         UnitJob.new('Plomada: move opening', units) do

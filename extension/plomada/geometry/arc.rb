@@ -139,6 +139,31 @@ module Plomada
 
       # True when any vertex carries a non-zero bulge.
       def curved?(vertices) = vertices.any? { |v| !straight?(bulge_of(v)) }
+
+      # Points where the line through +p+ along unit +d+ meets the circle
+      # (+c+, +r+): zero, one (tangent) or two points.
+      def line_circle(p, d, c, r)
+        f = Geometry.sub(p, c)
+        b = Geometry.dot(f, d)
+        disc = (b * b) - (Geometry.dot(f, f) - (r * r))
+        return [] if disc < -1e-9
+
+        root = Math.sqrt([disc, 0.0].max)
+        [-b - root, -b + root].uniq.map { |k| Geometry.add(p, Geometry.scale(d, k)) }
+      end
+
+      # Points where two circles meet: zero, one or two points.
+      def circle_circle(c1, r1, c2, r2)
+        d = Geometry.dist(c1, c2)
+        return [] if d <= EPS || d > r1 + r2 + 1e-9 || d < (r1 - r2).abs - 1e-9
+
+        along = ((d * d) + (r1 * r1) - (r2 * r2)) / (2.0 * d)
+        h = Math.sqrt([(r1 * r1) - (along * along), 0.0].max)
+        u = Geometry.scale(Geometry.sub(c2, c1), 1.0 / d)
+        base = Geometry.add(c1, Geometry.scale(u, along))
+        n = Geometry.left_normal(u)
+        [Geometry.add(base, Geometry.scale(n, h)), Geometry.add(base, Geometry.scale(n, -h))].uniq
+      end
     end
   end
 end

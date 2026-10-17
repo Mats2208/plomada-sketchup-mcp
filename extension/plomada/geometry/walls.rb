@@ -36,18 +36,65 @@ module Plomada
     #
     # Because every face is cut from the same grid, neighbouring faces meet
     # edge to edge: the result is a closed manifold by construction.
+    #
+    # Curved walls (0.5): an axis segment with a bulge is an arc. It keeps the
+    # same local frame, s along the axis (arc length) and t across it (signed,
+    # left positive), mapped to the world through polar coordinates instead
+    # of a straight line: a face at offset t is the concentric arc of radius
+    # r - sigma t. Joints intersect the offset curves (line-circle,
+    # circle-circle), and the cells are cut at stations (Arc.tessellate's
+    # equal angles plus every jamb, junction and panel edge), so each cell is
+    # a short straight facet and the emitter above stays as it is.
     class WallSolver
       Seg = Struct.new(:wall, :wall_index, :index, :a, :b, :u, :n, :len, :s_base, :off_l, :off_r,
                        :height, :start_cut, :end_cut, :junctions, :splits, :pieces, :openings,
-                       keyword_init: true) do
+                       :arc, :stations, keyword_init: true) do
         def id = wall['id']
         def off(side) = side == :l ? off_l : off_r
         def label = wall['axis'].size > 2 || wall['closed'] ? "wall #{id} segment #{index}" : "wall #{id}"
+        def arc? = !arc.nil?
+
+        # World point at local (s, t).
+        def world(s, t)
+          return [a[0] + (u[0] * s) + (n[0] * t), a[1] + (u[1] * s) + (n[1] * t)] unless arc
+
+          ang = arc[:a0] + (arc[:sigma] * s / arc[:r])
+          rho = arc[:r] - (arc[:sigma] * t)
+          [arc[:c][0] + (rho * Math.cos(ang)), arc[:c][1] + (rho * Math.sin(ang))]
+        end
+
+        # Local (s, t) of a world point. On an arc, s is measured on the
+        # circle and wrapped around the middle of the arc, so a point a little
+        # past either end gets a small negative s or one a little over len.
+        def local(p)
+          rel = Geometry.sub(p, a)
+          return [Geometry.dot(rel, u), Geometry.dot(rel, n)] unless arc
+
+          f = arc
+          d = (Math.atan2(p[1] - f[:c][1], p[0] - f[:c][0]) - f[:a0]) * f[:sigma]
+          mid = f[:sweep] / 2.0
+          d -= 2.0 * Math::PI * ((d - mid + Math::PI) / (2.0 * Math::PI)).floor
+          [d * f[:r], f[:sigma] * (f[:r] - Geometry.dist(p, f[:c]))]
+        end
+
+        def tangent_at(s)
+          return u unless arc
+
+          ang = arc[:a0] + (arc[:sigma] * s / arc[:r])
+          [-Math.sin(ang) * arc[:sigma], Math.cos(ang) * arc[:sigma]]
+        end
+
+        def normal_at(s) = arc ? Geometry.left_normal(tangent_at(s)) : n
+
+        # Radius of the face at offset t (arcs only).
+        def face_radius(t) = arc[:r] - (arc[:sigma] * t)
       end
 
       End = Struct.new(:seg, :at) do
         def point = at == :start ? seg.a : seg.b
-        def dir = at == :start ? seg.u : Geometry.scale(seg.u, -1.0)
+        def s = at == :start ? 0.0 : seg.len
+        def dir = at == :start ? seg.tangent_at(0.0) : Geometry.scale(seg.tangent_at(seg.len), -1.0)
+        def normal = seg.normal_at(s)
         def left_side = at == :start ? :l : :r
         def right_side = at == :start ? :r : :l
       end
@@ -103,23 +150,40 @@ module Plomada
           off_l, off_r = offsets(w)
           base = 0.0
           list = (0...count).map do |k|
-            a = pts[k]
-            b = pts[(k + 1) % pts.size]
+            a = pts[k][0, 2]
+            b = pts[(k + 1) % pts.size][0, 2]
             d = Geometry.sub(b, a)
-            len = Geometry.norm(d)
-            u = Geometry.scale(d, 1.0 / len)
+            arc = Arc.straight?(Arc.bulge_of(pts[k])) ? nil : Arc.frame(a, b, pts[k][2])
+            len = arc ? arc[:len] : Geometry.norm(d)
+            u = Geometry.scale(d, 1.0 / Geometry.norm(d))
             seg = Seg.new(wall: w, wall_index: wi, index: k, a: a, b: b, u: u, n: Geometry.left_normal(u),
                           len: len, s_base: base, off_l: off_l, off_r: off_r,
                           height: (w['height'] || @storey_height).to_f,
                           start_cut: { l: 0.0, r: 0.0, joint: false, kind: :free },
                           end_cut: { l: len, r: len, joint: false, kind: :free },
-                          junctions: [], splits: [], pieces: [], openings: [])
+                          junctions: [], splits: [], pieces: [], openings: [], arc: arc, stations: nil)
+            check_arc!(seg) if arc
             base += len
             seg
           end
           @by_wall[w['id']] = list
           @segs.concat(list)
         end
+      end
+
+      # An arc's inner face must keep wall_min_inner_radius_mm; its nominal
+      # stations divide it at equal angles fine enough for the outer face.
+      def check_arc!(seg)
+        radii = [seg.face_radius(seg.off_l), seg.face_radius(seg.off_r)]
+        min = @cfg[:wall_min_inner_radius_mm]
+        if radii.min < min
+          raise InvalidParams, "#{seg.label} curves too tightly: its inner face has a radius of " \
+                               "#{Geometry.fmt(radii.min.round(1))} mm (axis radius #{Geometry.fmt(seg.arc[:r].round(1))} mm, " \
+                               "thickness #{Geometry.fmt(seg.off_l - seg.off_r)} mm); the minimum is #{Geometry.fmt(min)} mm"
+        end
+
+        n = Arc.facets(radii.max, seg.arc[:sweep], nil, @cfg)
+        seg.stations = (0..n).map { |k| seg.len * k / n }
       end
 
       def offsets(w)
@@ -158,8 +222,13 @@ module Plomada
           return
         end
 
-        i1 = intersect(e1.seg, e1.left_side, e2.seg, e2.right_side)
-        i2 = intersect(e1.seg, e1.right_side, e2.seg, e2.left_side)
+        i1 = intersect(e1.seg, e1.left_side, e2.seg, e2.right_side, e1.point)
+        i2 = intersect(e1.seg, e1.right_side, e2.seg, e2.left_side, e1.point)
+        unless i1 && i2
+          raise InvalidParams, "#{who}: the faces of the two runs never meet near #{Geometry.fmt_pt(e1.point)}; " \
+                               'make the curve and the straight run cross at an angle or continue tangent'
+        end
+
         set_cut(e1, { e1.left_side => i1[0], e1.right_side => i2[0] }, :mitre)
         set_cut(e2, { e2.right_side => i1[1], e2.left_side => i2[1] }, :mitre)
         cut_of(e1)[:partner] = e2
@@ -170,10 +239,10 @@ module Plomada
 
       def straight_join!(e1, e2, who)
         p = e1.point
-        a1 = Geometry.add(p, Geometry.scale(e1.seg.n, e1.seg.off(e1.left_side)))
-        b2 = Geometry.add(p, Geometry.scale(e2.seg.n, e2.seg.off(e2.right_side)))
-        a2 = Geometry.add(p, Geometry.scale(e1.seg.n, e1.seg.off(e1.right_side)))
-        b1 = Geometry.add(p, Geometry.scale(e2.seg.n, e2.seg.off(e2.left_side)))
+        a1 = Geometry.add(p, Geometry.scale(e1.normal, e1.seg.off(e1.left_side)))
+        b2 = Geometry.add(p, Geometry.scale(e2.normal, e2.seg.off(e2.right_side)))
+        a2 = Geometry.add(p, Geometry.scale(e1.normal, e1.seg.off(e1.right_side)))
+        b1 = Geometry.add(p, Geometry.scale(e2.normal, e2.seg.off(e2.left_side)))
         if Geometry.dist(a1, b2) > @cfg[:vertex_weld_mm] * 10 || Geometry.dist(a2, b1) > @cfg[:vertex_weld_mm] * 10
           raise InvalidParams, "#{who}: two runs continue in line at #{Geometry.fmt_pt(p)} with different thickness " \
                                'or justification; give them the same faces or join them at an angle'
@@ -196,8 +265,12 @@ module Plomada
       end
 
       # Intersection of seg1's +side1+ face line with seg2's +side2+ face line:
-      # [s along seg1, s along seg2], or nil when parallel.
-      def intersect(seg1, side1, seg2, side2)
+      # [s along seg1, s along seg2], or nil when parallel. When a face is an
+      # arc the curves meet up to twice; the point closest to +near+ (the
+      # joint's axis point) is the one the joint means.
+      def intersect(seg1, side1, seg2, side2, near = nil)
+        return curve_intersect(seg1, side1, seg2, side2, near || seg1.a) if seg1.arc? || seg2.arc?
+
         den = Geometry.cross(seg1.u, seg2.u)
         return nil if den.abs <= 1e-12
 
@@ -205,6 +278,23 @@ module Plomada
         p2 = Geometry.add(seg2.a, Geometry.scale(seg2.n, seg2.off(side2)))
         w = Geometry.sub(p2, p1)
         [Geometry.cross(w, seg2.u) / den, Geometry.cross(w, seg1.u) / den]
+      end
+
+      def curve_intersect(seg1, side1, seg2, side2, near)
+        hits = face_hits(seg1, seg1.off(side1), seg2, seg2.off(side2))
+        best = hits.min_by { |p| Geometry.dist(p, near) }
+        best && [seg1.local(best)[0], seg2.local(best)[0]]
+      end
+
+      # World points where the face of +s1+ at offset +t1+ meets the face of
+      # +s2+ at offset +t2+ (each a line or a circle).
+      def face_hits(s1, t1, s2, t2)
+        if s1.arc? && s2.arc?
+          Arc.circle_circle(s1.arc[:c], s1.face_radius(t1), s2.arc[:c], s2.face_radius(t2))
+        else
+          line, lt, circle, ct = s1.arc? ? [s2, t2, s1, t1] : [s1, t1, s2, t2]
+          Arc.line_circle(Geometry.add(line.a, Geometry.scale(line.n, lt)), line.u, circle.arc[:c], circle.face_radius(ct))
+        end
       end
 
       def free_ends
@@ -260,9 +350,7 @@ module Plomada
         @segs.each do |v|
           next if v.equal?(e.seg)
 
-          rel = Geometry.sub(p, v.a)
-          s = Geometry.dot(rel, v.u)
-          t = Geometry.dot(rel, v.n)
+          s, t = v.local(p)
           next if s < -@tol || s > v.len + @tol
           next if t < v.off_r - @tol || t > v.off_l + @tol
 
@@ -273,7 +361,7 @@ module Plomada
         # At a mitred corner of a polyline the end lies on two arms; butt into
         # the arm the stem actually crosses, never the one it runs in line with.
         min_sin = Math.sin(@min_angle * Math::PI / 180.0)
-        crossing = hits.select { |v, _, _| Geometry.cross(e.dir, v.u).abs >= min_sin }
+        crossing = hits.select { |v, s, _| Geometry.cross(e.dir, v.tangent_at(s)).abs >= min_sin }
         hits = crossing unless crossing.empty?
         hit = hits.min_by { |v, s, t| [at_vertex?(v, s) ? 1 : 0, t.abs] }
         v, s, = hit
@@ -295,16 +383,21 @@ module Plomada
 
       def tee!(e, v)
         d = e.dir
-        sin_angle = Geometry.cross(d, v.u).abs
+        at = v.local(e.point)[0]
+        sin_angle = Geometry.cross(d, v.tangent_at(at)).abs
         angle = Math.asin(sin_angle.clamp(0.0, 1.0)) * 180.0 / Math::PI
         if angle < @min_angle
           raise InvalidParams, "wall #{e.seg.id} meets wall #{v.id} at #{Geometry.fmt_pt(e.point)} at " \
                                "#{Geometry.fmt(angle)} degrees; the minimum is #{Geometry.fmt(@min_angle)}"
         end
 
-        side = Geometry.dot(d, v.n).positive? ? :l : :r
-        il = intersect(e.seg, :l, v, side)
-        ir = intersect(e.seg, :r, v, side)
+        side = Geometry.dot(d, v.normal_at(at)).positive? ? :l : :r
+        il = intersect(e.seg, :l, v, side, e.point)
+        ir = intersect(e.seg, :r, v, side, e.point)
+        unless il && ir
+          raise InvalidParams, "wall #{e.seg.id} ends at #{Geometry.fmt_pt(e.point)} inside wall #{v.id} but its faces "                                "never reach the #{side == :l ? 'left' : 'right'} face of #{v.label}"
+        end
+
         set_cut(e, { l: il[0], r: ir[0] }, :tee, v.id)
         v.junctions << { side: side, s0: [il[1], ir[1]].min, s1: [il[1], ir[1]].max,
                          wall: e.seg.id, height: e.seg.height }
@@ -317,6 +410,7 @@ module Plomada
         @segs.combination(2).each do |s1, s2|
           next if s1.wall.equal?(s2.wall) && adjacent?(s1, s2)
           next if @tee_pairs[[s1.object_id, s2.object_id]] || @tee_pairs[[s2.object_id, s1.object_id]]
+          next curved_crossing!(s1, s2) if s1.arc? || s2.arc?
 
           den = Geometry.cross(s1.u, s2.u)
           next if den.abs <= 1e-12
@@ -333,6 +427,20 @@ module Plomada
           through, cut, t_cut = pick_through(s1, s2, t1, t2)
           split!(cut, through, t_cut)
         end
+      end
+
+      # Plomada splits straight walls that cross in an X; a crossing where one
+      # of them curves is refused instead.
+      def curved_crossing!(s1, s2)
+        face_hits(s1, 0.0, s2, 0.0).each do |p|
+          a = s1.local(p)[0]
+          b = s2.local(p)[0]
+          next unless a > @tol && a < s1.len - @tol && b > @tol && b < s2.len - @tol
+
+          who = s1.wall.equal?(s2.wall) ? "wall #{s1.id} crosses itself" : "walls #{s1.id} and #{s2.id} cross"
+          raise InvalidParams, "#{who} at #{Geometry.fmt_pt(p)} where one of them curves; end one wall on the other "                                'or split them at the crossing'
+        end
+        nil
       end
 
       def adjacent?(s1, s2)
@@ -481,27 +589,79 @@ module Plomada
           spans[o['wall']] << [off, off + wid, o['id']]
 
           entry = { rec: o, s0: s0, s1: s1, z0: z0, z1: z1 }
+          entry[:panels] = arc_panels(seg, o, s0, s1) if seg.arc?
           piece.openings << entry
           seg.openings << entry
         end
       end
 
-      # Refuses footprints that overlap without a junction we resolved.
+      # The flat panels of an opening on an arc: equal arc lengths no wider
+      # than its panel_width (opening_panel_max_mm by default), each a chord at
+      # mid thickness that may bow at most opening_panel_max_sagitta_mm off the
+      # curve. Returns [[s_a, s_b], ...].
+      def arc_panels(seg, o, s0, s1)
+        if o['head'] == 'arch'
+          raise InvalidParams, "opening #{o['id']}: an arched head needs a straight wall, and #{seg.label} curves; "                                'Plomada 0.5 builds arches on straight runs only'
+        end
+
+        max = (o['panel_width'] || @cfg[:opening_panel_max_mm]).to_f
+        width = s1 - s0
+        count = [(width / max - 1e-9).ceil, 1].max
+        step = width / count
+        mid_r = seg.face_radius((seg.off_l + seg.off_r) / 2.0)
+        sag = mid_r * (1.0 - Math.cos(step / seg.arc[:r] / 2.0))
+        limit = @cfg[:opening_panel_max_sagitta_mm]
+        if sag > limit + 1e-6
+          fit = (2.0 * Math.acos(1.0 - (limit / mid_r)) * seg.arc[:r]).floor
+          raise InvalidParams, "opening #{o['id']} on #{seg.label}: a #{Geometry.fmt(step.round(1))} mm panel bows "                                "#{Geometry.fmt(sag.round(1))} mm off its chord at radius #{Geometry.fmt(mid_r.round(1))} mm; "                                "the most is #{Geometry.fmt(limit)} mm, so set panel_width to #{fit} mm or less"
+        end
+
+        (0...count).map { |k| [s0 + (step * k), k == count - 1 ? s1 : s0 + (step * (k + 1))] }
+      end
+
+      # Refuses footprints that overlap without a junction we resolved. An arc
+      # piece is compared facet by facet (each facet a convex quad); two runs
+      # joined on a curve are not compared, because a facet's chord and the
+      # circle the other run was trimmed to overlap by up to the chord tolerance.
       def check_overlaps
         pieces = @segs.flat_map(&:pieces)
-        polys = pieces.map { |p| footprint_world(p) }
+        parts = pieces.map { |p| footprint_parts(p) }
         pieces.each_index do |i|
           (i + 1...pieces.size).each do |j|
             next if pieces[i].seg.equal?(pieces[j].seg)
+            next if curved_joint?(pieces[i].seg, pieces[j].seg)
 
-            inter = Geometry.convex_intersection(polys[i], polys[j])
-            next if inter.size < 3 || Geometry.signed_area(inter).abs < 1.0
+            parts[i].product(parts[j]).each do |a, b|
+              inter = Geometry.convex_intersection(a, b)
+              next if inter.size < 3 || Geometry.signed_area(inter).abs < 1.0
 
-            raise InvalidParams, "walls #{pieces[i].seg.id} and #{pieces[j].seg.id} overlap by " \
-                                 "#{Geometry.fmt(Geometry.signed_area(inter).abs)} mm2 near " \
-                                 "#{Geometry.fmt_pt(Geometry.centroid(inter))} without a junction Plomada can resolve; " \
-                                 'end one wall on the axis of the other'
+              raise InvalidParams, "walls #{pieces[i].seg.id} and #{pieces[j].seg.id} overlap by " \
+                                   "#{Geometry.fmt(Geometry.signed_area(inter).abs)} mm2 near " \
+                                   "#{Geometry.fmt_pt(Geometry.centroid(inter))} without a junction Plomada can resolve; " \
+                                   'end one wall on the axis of the other'
+            end
           end
+        end
+      end
+
+      def curved_joint?(s1, s2)
+        return false unless s1.arc? || s2.arc?
+        return true if @tee_pairs[[s1.object_id, s2.object_id]] || @tee_pairs[[s2.object_id, s1.object_id]]
+        return true if s1.wall.equal?(s2.wall) && adjacent?(s1, s2)
+
+        [s1.start_cut, s1.end_cut].any? { |c| c[:partner]&.seg.equal?(s2) }
+      end
+
+      # The footprint as convex polygons: one for a straight piece, one per
+      # facet (between nominal stations) for an arc.
+      def footprint_parts(p)
+        return [footprint_world(p)] unless p.seg.arc?
+
+        fp = footprint_local(p)
+        piece_cuts(p).each_cons(2).filter_map do |c0, c1|
+          cell = Geometry.clip_half_plane(fp) { |q| q[0] - c0 }
+          cell = Geometry.clip_half_plane(cell) { |q| c1 - q[0] }
+          cell.size < 3 ? nil : cell.map { |q| to_world(p.seg, q) }
         end
       end
 
@@ -512,9 +672,7 @@ module Plomada
         [[p.start[:r], s.off_r], [p.finish[:r], s.off_r], [p.finish[:l], s.off_l], [p.start[:l], s.off_l]]
       end
 
-      def to_world(seg, st)
-        [seg.a[0] + (seg.u[0] * st[0]) + (seg.n[0] * st[1]), seg.a[1] + (seg.u[1] * st[0]) + (seg.n[1] * st[1])]
-      end
+      def to_world(seg, st) = seg.world(st[0], st[1])
 
       def footprint_world(p) = footprint_local(p).map { |st| to_world(p.seg, st) }
 
@@ -541,7 +699,7 @@ module Plomada
             outer_ids: f[:outer],
             hole_ids: f[:holes],
             normal: f[:normal]
-          }
+          }.tap { |h| h[:curved] = true if f[:meta][:curved] }
         end
       end
 
@@ -570,25 +728,44 @@ module Plomada
               next unless c > lo + 1e-9 && c < hi - 1e-9
 
               f = (c - pcut[:l]) / (pcut[:r] - pcut[:l])
-              t = pseg.off_l + ((pseg.off_r - pseg.off_l) * f)
-              world = to_world(pseg, [c, t])
-              out << Geometry.dot(Geometry.sub(world, seg.a), seg.u)
+              world = if pseg.arc?
+                        # The mitre face is the straight line between its two face points.
+                        l_pt = to_world(pseg, [pcut[:l], pseg.off_l])
+                        r_pt = to_world(pseg, [pcut[:r], pseg.off_r])
+                        Geometry.add(l_pt, Geometry.scale(Geometry.sub(r_pt, l_pt), f))
+                      else
+                        to_world(pseg, [c, pseg.off_l + ((pseg.off_r - pseg.off_l) * f)])
+                      end
+              out << seg.local(world)[0]
             end
           end
         end
         out
       end
 
+      # The s values where a piece is cut into columns: its ends, every jamb,
+      # panel edge, junction face and mitre-partner cut, and on an arc the
+      # stations between them. Computed once per piece.
+      def piece_cuts(piece)
+        (@piece_cuts ||= {})[piece.object_id] ||= begin
+          seg = piece.seg
+          lo, hi = piece.span
+          cuts = [lo, hi]
+          piece.openings.each { |o| cuts.push(o[:s0], o[:s1]) }
+          piece.openings.each { |o| (o[:panels] || []).each { |pa, pb| cuts.push(pa, pb) } }
+          seg.junctions.each { |j| cuts.push(j[:s0], j[:s1]) }
+          cuts.concat(mitre_partner_cuts(piece))
+          cuts.concat(arc_stations(piece, cuts)) if seg.arc?
+          cuts = merge_values(cuts.select { |c| c >= lo - 1e-9 && c <= hi + 1e-9 }, @cfg[:cut_merge_mm])
+          cuts[0] = lo
+          cuts[-1] = hi
+          cuts
+        end
+      end
+
       def emit_piece(piece)
         seg = piece.seg
-        lo, hi = piece.span
-        cuts = [lo, hi]
-        piece.openings.each { |o| cuts.push(o[:s0], o[:s1]) }
-        seg.junctions.each { |j| cuts.push(j[:s0], j[:s1]) }
-        cuts.concat(mitre_partner_cuts(piece))
-        cuts = merge_values(cuts.select { |c| c >= lo - 1e-9 && c <= hi + 1e-9 }, @cfg[:cut_merge_mm])
-        cuts[0] = lo
-        cuts[-1] = hi
+        cuts = piece_cuts(piece)
         zc = @z_cuts.select { |z| z < seg.height - @cfg[:cut_merge_mm] } + [seg.height]
         fp = footprint_local(piece)
         prefix = "#{seg.id}|#{seg.index}|#{piece.index}|"
@@ -613,8 +790,27 @@ module Plomada
               c0: k.zero? || void[k - 1][m],
               c1: k == cols.size - 1 || void[k + 1][m]
             }
-            emit_prism(world, kinds, z0, z1, seg, prefix, c0, c1, open)
+            emit_prism(world, kinds, z0, z1, seg, prefix, c0, c1, open, k)
           end
+        end
+      end
+
+      # The nominal stations of an arc piece that become cuts: those inside
+      # the piece, away from its mitre zones (a station there would split the
+      # diagonal face the partner run shares), outside every junction span
+      # (the stem's end face must meet one host facet) and not so close to a
+      # structural cut that they would leave a sliver facet.
+      def arc_stations(piece, structural)
+        seg = piece.seg
+        lo, hi = piece.span
+        facet = seg.len / (seg.stations.size - 1)
+        gap = [@cfg[:cut_merge_mm], facet * 0.25].max
+        zones = [[piece.start[:l], piece.start[:r]].minmax, [piece.finish[:l], piece.finish[:r]].minmax]
+        zones.concat(seg.junctions.map { |j| [j[:s0], j[:s1]] })
+        seg.stations.select do |c|
+          c > lo + gap && c < hi - gap &&
+            zones.none? { |a, b| c > a - gap && c < b + gap } &&
+            structural.none? { |x| (x - c).abs < gap }
         end
       end
 
@@ -647,7 +843,10 @@ module Plomada
         Geometry.cross(e, Geometry.sub(pt, a)).abs / Geometry.norm(e) < 1e-7
       end
 
-      def emit_prism(world, kinds, z0, z1, seg, prefix, c0, c1, open)
+      # +col+ is the column index: an arc's face is one plane per facet, so
+      # its left and right sides merge per column only and carry curved: true
+      # (their vertical edges are softened in SketchUp).
+      def emit_prism(world, kinds, z0, z1, seg, prefix, c0, c1, open, col = 0)
         wall = seg.id
         h = seg.height
         if open[:bottom]
@@ -665,16 +864,21 @@ module Plomada
           q = world[(i + 1) % world.size]
           kind, which = kinds[i]
           next if kind == :cut && !open[(which - c0).abs < 1e-9 ? :c0 : :c1]
+          meta = { wall: wall, seg: seg.index }
           key, part = case kind
-                      when :face then [which == :l ? 'left' : 'right', which == :l ? 'left' : 'right']
+                      when :face
+                        side = which == :l ? 'left' : 'right'
+                        meta[:curved] = true if seg.arc?
+                        [seg.arc? ? "#{side}@#{col}" : side, side]
                       when :cut
                         outward = [q[1] - p[1], -(q[0] - p[0])]
-                        ["cut#{Geometry.fmt(which)}#{Geometry.dot(outward, seg.u).positive? ? '+' : '-'}", 'jamb']
+                        sign = Geometry.dot(outward, seg.tangent_at(which)).positive? ? '+' : '-'
+                        ["cut#{Geometry.fmt(which)}#{sign}", 'jamb']
                       when :end
                         which == :unknown ? ["edge#{@mesh.faces.size}", 'end'] : [which.to_s, 'end']
                       end
           @mesh.add([[p[0], p[1], z0], [q[0], q[1], z0], [q[0], q[1], z1], [p[0], p[1], z1]],
-                    "#{prefix}#{key}", { wall: wall, seg: seg.index, part: part })
+                    "#{prefix}#{key}", meta.merge(part: part))
         end
       end
 
@@ -683,9 +887,13 @@ module Plomada
       # Where each opening's component goes: origin at the near jamb, on the
       # wall's mid-thickness plane, at sill height; x along the axis, y across
       # (toward the axis's left side), z up.
+      # On an arc, one frame per flat panel (see arc_panels): origin at the
+      # panel's near edge on the mid-thickness arc, x along its chord.
       def opening_frames
         @segs.flat_map do |seg|
-          seg.openings.map do |o|
+          seg.openings.flat_map do |o|
+            next panel_frames(seg, o) if o[:panels]
+
             mid = (seg.off_l + seg.off_r) / 2.0
             base = to_world(seg, [o[:s0], mid])
             rec = o[:rec]
@@ -704,16 +912,59 @@ module Plomada
         end
       end
 
+      def panel_frames(seg, o)
+        mid = (seg.off_l + seg.off_r) / 2.0
+        rec = o[:rec]
+        o[:panels].each_with_index.map do |(pa, pb), k|
+          a = to_world(seg, [pa, mid])
+          b = to_world(seg, [pb, mid])
+          x = Geometry.unit(Geometry.sub(b, a))
+          y = Geometry.left_normal(x)
+          {
+            id: rec['id'], wall: seg.id, kind: rec['opening_kind'], tag: rec['tag'] || rec['id'],
+            width: Geometry.dist(a, b), height: o[:z1] - o[:z0], sill: o[:z0],
+            swing: rec['swing'], hand: rec['hand'],
+            thickness: seg.off_l - seg.off_r,
+            origin: [a[0], a[1], o[:z0]],
+            xaxis: [x[0], x[1], 0.0],
+            yaxis: [y[0], y[1], 0.0],
+            segment: seg.index, local: [pa, pb], panel: k, panels: o[:panels].size,
+            record: rec
+          }
+        end
+      end
+
       # Solids for strip_internal_faces: each piece's footprint, height and voids.
+      # An arc piece gives one convex solid per emitted facet, cut exactly where
+      # its faces are, so a probe 1 mm off a facet never lands inside a chord
+      # of a neighbouring facet; a facet inside an opening is void in full.
       def solids
         @segs.flat_map do |seg|
-          seg.pieces.map do |p|
-            {
+          seg.pieces.flat_map do |p|
+            next arc_solids(p) if seg.arc?
+
+            [{
               wall: seg.id, poly: footprint_world(p), z0: 0.0, z1: seg.height,
               a: seg.a, u: seg.u,
               voids: p.openings.map { |o| { s0: o[:s0], s1: o[:s1], z0: o[:z0], z1: o[:z1] } }
-            }
+            }]
           end
+        end
+      end
+
+      def arc_solids(p)
+        seg = p.seg
+        fp = footprint_local(p)
+        tol = @cfg[:cut_merge_mm]
+        piece_cuts(p).each_cons(2).filter_map do |c0, c1|
+          cell = Geometry.clip_half_plane(fp) { |q| q[0] - c0 }
+          cell = Geometry.clip_half_plane(cell) { |q| c1 - q[0] }
+          next if cell.size < 3
+
+          voids = p.openings.select { |o| c0 >= o[:s0] - tol && c1 <= o[:s1] + tol }
+                   .map { |o| { s0: -Float::INFINITY, s1: Float::INFINITY, z0: o[:z0], z1: o[:z1] } }
+          poly = cell.map { |q| to_world(seg, q) }
+          { wall: seg.id, poly: poly, z0: 0.0, z1: seg.height, a: poly[0], u: [1.0, 0.0], voids: voids }
         end
       end
 
@@ -728,15 +979,23 @@ module Plomada
         closed = @walls.select { |w| w['closed'] }
         outer = closed.reject do |w|
           probe = w['axis'][0]
-          closed.any? { |o| !o.equal?(w) && Geometry.point_in_polygon?(probe, o['axis']) }
+          closed.any? { |o| !o.equal?(w) && Geometry.point_in_polygon?(probe, Geometry.axis_ring(o)) }
         end
-        outer.sort_by { |w| -Geometry.signed_area(w['axis']).abs }.map { |w| outline_of(w) }
+        outer.sort_by { |w| -Geometry.signed_area(Geometry.axis_ring(w)).abs }.map { |w| outline_of(w) }
       end
 
+      # The outer face of a closed wall; along an arc it passes through the
+      # same facet vertices as the wall's face.
       def outline_of(w)
-        side = Geometry.signed_area(w['axis']).positive? ? :r : :l
-        pts = @by_wall[w['id']].map do |seg|
-          to_world(seg, [seg.start_cut[side], seg.off(side)])
+        side = Geometry.signed_area(Geometry.axis_ring(w)).positive? ? :r : :l
+        pts = @by_wall[w['id']].flat_map do |seg|
+          first = to_world(seg, [seg.start_cut[side], seg.off(side)])
+          next [first] unless seg.arc?
+
+          lo = seg.start_cut[side]
+          hi = seg.end_cut[side]
+          inner = seg.pieces.flat_map { |p| piece_cuts(p) }.uniq.select { |c| c > lo + 1e-6 && c < hi - 1e-6 }.sort
+          [first] + inner.map { |c| to_world(seg, [c, seg.off(side)]) }
         end
         pts = pts.reverse if Geometry.signed_area(pts).negative?
         { wall: w['id'], points: pts, thickness: w['thickness'].to_f }
@@ -748,6 +1007,10 @@ module Plomada
     end
 
     module_function
+
+    # A closed wall's axis as a plain ring, arcs tessellated (the axis itself
+    # when it has none).
+    def axis_ring(wall) = Arc.curved?(wall['axis']) ? Arc.polyline(wall['axis'], closed: true) : wall['axis']
 
     # Solves walls and openings; see WallSolver. Each building (walls that
     # touch, see wall_components) is solved on its own and the layouts merged:
@@ -779,8 +1042,9 @@ module Plomada
     def wall_components(walls, config = CONFIG)
       grow = config[:junction_tolerance_mm] + 1.0
       boxes = walls.map do |w|
-        xs = w['axis'].map { |q| q[0] }
-        ys = w['axis'].map { |q| q[1] }
+        pts = Arc.curved?(w['axis']) ? Arc.polyline(w['axis'], closed: w['closed']) : w['axis']
+        xs = pts.map { |q| q[0] }
+        ys = pts.map { |q| q[1] }
         g = w['thickness'].to_f + grow
         [xs.min - g, ys.min - g, xs.max + g, ys.max + g]
       end
