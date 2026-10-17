@@ -11,6 +11,7 @@ require_relative 'planters'
 require_relative 'columns'
 require_relative 'pools'
 require_relative 'ramps'
+require_relative 'curtain_walls'
 require_relative '../plan'
 require_relative '../jobs'
 require_relative '../geometry'
@@ -113,7 +114,7 @@ module Plomada
           warnings.concat(stair_warnings(st, lay, height + opts['slab_thickness']))
           [st, lay]
         end
-        { plan: plan, buildings: Geometry.building_plans(plan['walls'], plan['openings']), stairs: stairs,
+        { plan: plan, buildings: Geometry.building_plans(plan['walls'], Geometry.wall_openings(plan, height)), stairs: stairs,
           furniture: known, library: library, warnings: warnings, height: height,
           library_dir: opts['library'] && Library.map(opts['library']) ? opts['library'] : nil }
       end
@@ -297,6 +298,9 @@ module Plomada
         add = ->(g) { state[:groups] << g.name }
         units = plan['columns'].each_slice(8).map do |batch|
           ["columns #{batch.map { |c| c['id'] }.join(', ')}", -> { batch.each { |c| add.call(Columns.build(model, storey, c, prep[:height])) } }]
+        end
+        units += plan['curtain_walls'].map do |r|
+          ["curtain wall #{r['id']}", -> { add.call(CurtainWalls.build(model, storey, r, prep[:height])) }]
         end
         units += plan['ramps'].map { |r| ["ramp #{r['id']}", -> { add.call(Ramps.build(model, storey, r)) }] }
         units += plan['pools'].map do |r|

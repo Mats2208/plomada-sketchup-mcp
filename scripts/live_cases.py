@@ -177,6 +177,30 @@ CASES["storeys"] = {
 }
 
 
+CASES["arches"] = {
+    "plan": {
+        "walls": [
+            {"id": "EXT", "axis": [[0, 0], [14000, 0], [14000, 8000], [0, 8000]], "thickness": 250, "closed": True}
+        ],
+        "openings": [
+            {
+                "id": f"A{i}",
+                "wall": "EXT",
+                "opening_kind": "window",
+                "offset": 1000 + 3000 * i,
+                "width": 1900,
+                "sill": 400,
+                "height": 2300,
+                "head": "arch",
+            }
+            for i in range(4)
+        ],
+        "curtain_walls": [{"id": "M1", "path": [[14000, 1000], [14000, 7000]], "transoms": [1100]}],
+    },
+    "options": {"roof": "flat", "storey_height": 3200},
+}
+
+
 async def run(case: str, capture: str | None) -> None:
     spec = CASES[case]
     client = dev.dev_client()

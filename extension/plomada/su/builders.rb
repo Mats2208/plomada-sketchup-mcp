@@ -35,8 +35,17 @@ module Plomada
       # surface; horizontal edges, jambs and segment joints stay hard.
       def soften_curves(group)
         count = 0
+        limit = Math.cos(CONFIG[:smooth_max_angle_deg] * Math::PI / 180.0)
         group.entities.grep(Sketchup::Edge).each do |e|
           faces = e.faces
+          # The strips of an arch's soffit shade as one vault.
+          if faces.size == 2 && faces.all? { |f| f.get_attribute(DICT, 'part') == 'soffit' } &&
+             faces[0].normal.dot(faces[1].normal) > limit
+            e.soft = true
+            e.smooth = true
+            count += 1
+            next
+          end
           next unless faces.size == 2 && faces.all? { |f| f.get_attribute(DICT, 'curved') == true }
 
           keys = faces.map { |f| %w[wall segment part].map { |k| f.get_attribute(DICT, k) } }
@@ -90,10 +99,20 @@ module Plomada
 
       module_function
 
+      def arch_rise(frame)
+        rec = frame[:record] || {}
+        rec['head'] == 'arch' ? rec['arch_rise'].to_f : nil
+      end
+
       def definition_name(frame)
         w = Geometry.fmt(frame[:width])
         h = Geometry.fmt(frame[:height])
-        if frame[:kind] == 'window'
+        rise = arch_rise(frame)
+        if rise && frame[:kind] == 'window'
+          "plomada_ventana_arco_#{w}x#{h}_#{Geometry.fmt(rise)}"
+        elsif rise
+          "plomada_puerta_arco_#{w}x#{h}_#{Geometry.fmt(rise)}_#{Geometry.fmt(frame[:thickness])}_#{frame[:swing]}_#{frame[:hand]}"
+        elsif frame[:kind] == 'window'
           "plomada_ventana_#{w}x#{h}"
         elsif garage?(frame)
           "plomada_porton_#{w}x#{h}_#{Geometry.fmt(frame[:thickness])}_#{frame[:swing]}"
@@ -109,7 +128,12 @@ module Plomada
 
         defn = existing || model.definitions.add(name)
         defn.entities.clear! if existing
-        parts = if frame[:kind] == 'window'
+        rise = arch_rise(frame)
+        parts = if rise && frame[:kind] == 'window'
+                  Geometry.arch_window_parts(frame[:width], frame[:height], rise)
+                elsif rise
+                  Geometry.arch_door_parts(frame[:width], frame[:height], rise, frame[:thickness], frame[:swing], frame[:hand])
+                elsif frame[:kind] == 'window'
                   Geometry.window_parts(frame[:width], frame[:height])
                 elsif garage?(frame)
                   Geometry.garage_door_parts(frame[:width], frame[:height], frame[:thickness], frame[:swing])
@@ -128,9 +152,14 @@ module Plomada
         g = entities.add_group
         g.name = part[:name]
         pivot = part[:pivot] || [0.0, 0.0, 0.0]
-        min = [0, 1, 2].map { |k| part[:min][k] - pivot[k] }
-        max = [0, 1, 2].map { |k| part[:max][k] - pivot[k] }
-        SU.add_faces(g.entities, SU.faces_from_loops(Geometry.box_faces(min, max)))
+        if part[:faces]
+          SU.add_faces(g.entities, SU.faces_from_loops(part[:faces]), always_build: true)
+          SU.soften(g.entities)
+        else
+          min = [0, 1, 2].map { |k| part[:min][k] - pivot[k] }
+          max = [0, 1, 2].map { |k| part[:max][k] - pivot[k] }
+          SU.add_faces(g.entities, SU.faces_from_loops(Geometry.box_faces(min, max)))
+        end
         g.transformation = Geom::Transformation.translation(SU.pt(pivot)) if part[:pivot]
         g.material = SU.material(model, MATERIALS.fetch(part[:material]))
         attrs = { 'part' => part[:name] }

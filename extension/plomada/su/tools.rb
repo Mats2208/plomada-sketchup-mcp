@@ -53,7 +53,8 @@ module Plomada
       def storey_solids(model, storey)
         plan = Plan.normalize(PlanReader.read(model, storey).merge('storey' => nil))
         settings = PlanReader.storey_settings(model, storey)
-        Geometry.solve_walls(plan['walls'], plan['openings'], storey_height: settings['height'].to_f)[:solids]
+        height = settings['height'].to_f
+        Geometry.solve_walls(plan['walls'], Geometry.wall_openings(plan, height), storey_height: height)[:solids]
       rescue Plomada::Error
         nil
       end

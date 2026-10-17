@@ -65,7 +65,7 @@ module Plomada
         old = walls_group(model, storey)
         state = { group: nil, faces: 0, removed: 0, manifold: nil, groups: [], finishes: finishes(old),
                   elevation: settings.fetch('elevation', 0.0).to_f }
-        units = Build.solve_units(Geometry.building_plans(plan['walls'], plan['openings']), height, state)
+        units = Build.solve_units(Geometry.building_plans(plan['walls'], Geometry.wall_openings(plan, height)), height, state)
         at = units.size
         units << ['plan solved', lambda {
           layout = state[:layout] = Geometry.merge_layouts(state[:layouts])

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'core'
+require_relative 'arc'
 require_relative '../config'
 
 module Plomada
@@ -92,6 +93,71 @@ module Plomada
         { name: 'marco_sup', material: :wood, min: [face, frame_y[0], height - face], max: [width - face, frame_y[1], height] },
         { name: 'hoja', material: :wood, min: [face, leaf_y[0], under], max: [width - face, leaf_y[1], height - face],
           pivot: [hinge_x, outer_y, 0.0], hinge: toward.positive? ? 'far_jamb' : 'near_jamb' }
+      ]
+    end
+
+    # --- arched openings ----------------------------------------------------------------
+
+    # The arch of an opening +width+ wide springing at +spring+ with +rise+, in
+    # the component's (x, z) plane: {curve: outer points from x 0 to width,
+    # center:, radius:}.
+    def arch_curve(width, spring, rise, config = CONFIG)
+      bulge = -2.0 * rise / width
+      center, radius = Arc.center_radius([0.0, spring], [width, spring], bulge)
+      { curve: Arc.tessellate([0.0, spring], [width, spring], bulge, nil, config), center: center, radius: radius }
+    end
+
+    # Points of the arch's concentric inner curve +inset+ inside it, from right
+    # to left, clipped at the spring line (walked right to left, the curve
+    # bulging up is counter-clockwise: a positive bulge).
+    def arch_inner(arch, spring, inset, config = CONFIG)
+      c = arch[:center]
+      r = arch[:radius] - inset
+      half = Math.sqrt([(r * r) - ((spring - c[1])**2), 0.0].max)
+      a = [c[0] + half, spring]
+      b = [c[0] - half, spring]
+      sagitta = c[1] + r - spring
+      Arc.tessellate(a, b, 2.0 * sagitta / dist(a, b), nil, config)
+    end
+
+    # Extrudes an (x, z) profile across the wall from y0 to y1 (closed solid).
+    def profile_faces(profile, y0, y1)
+      prof = dedupe_ring(profile)
+      prof = prof.reverse if signed_area(prof).negative?
+      extrude_profile(prof, [0.0, 0.0], [1.0, 0.0], [0.0, -1.0], -y1, -y0)
+    end
+
+    # An arched window: jambs and sill up to the spring line, a curved head
+    # member, one glass pane filling the rectangle and the arch.
+    def arch_window_parts(width, height, rise, config = CONFIG)
+      f = config[:window_frame_mm]
+      g = config[:glass_thickness_mm] / 2.0
+      d = f / 2.0
+      spring = height - rise
+      arch = arch_curve(width, spring, rise, config)
+      inner = arch_inner(arch, spring, f, config)
+      [
+        { name: 'marco_izq', material: :frame, min: [0.0, -d, 0.0], max: [f, d, spring] },
+        { name: 'marco_der', material: :frame, min: [width - f, -d, 0.0], max: [width, d, spring] },
+        { name: 'marco_inf', material: :frame, min: [f, -d, 0.0], max: [width - f, d, f] },
+        { name: 'marco_arco', material: :frame, faces: profile_faces(arch[:curve] + inner, -d, d) },
+        { name: 'vidrio', material: :glass,
+          faces: profile_faces([[f, f], [width - f, f], [width - f, spring]] + inner + [[f, spring]], -g, g) }
+      ]
+    end
+
+    # An arched door: the door of door_parts up to the spring line and a
+    # glazed fanlight in the arch above it.
+    def arch_door_parts(width, height, rise, thickness, swing, hand, config = CONFIG)
+      f = config[:window_frame_mm]
+      g = config[:glass_thickness_mm] / 2.0
+      d = f / 2.0
+      spring = height - rise
+      arch = arch_curve(width, spring, rise, config)
+      inner = arch_inner(arch, spring, f, config)
+      door_parts(width, spring, thickness, swing, hand, config) + [
+        { name: 'marco_arco', material: :frame, faces: profile_faces(arch[:curve] + inner, -d, d) },
+        { name: 'vidrio', material: :glass, faces: profile_faces(inner + [[f, spring]], -g, g) }
       ]
     end
 

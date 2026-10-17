@@ -588,8 +588,13 @@ module Plomada
           end
           spans[o['wall']] << [off, off + wid, o['id']]
 
+          if o['head'] == 'arch' && z1 > seg.height - @cfg[:cut_merge_mm]
+            raise InvalidParams, "opening #{o['id']}: its arch crown at #{Geometry.fmt(z1)} reaches the top of wall " \
+                                 "#{o['wall']} (#{Geometry.fmt(seg.height)}); lower it so wall remains above the arch"
+          end
+
           entry = { rec: o, s0: s0, s1: s1, z0: z0, z1: z1 }
-          entry[:panels] = arc_panels(seg, o, s0, s1) if seg.arc?
+          entry[:panels] = arc_panels(seg, o, s0, s1) if seg.arc? && !o['curtain']
           piece.openings << entry
           seg.openings << entry
         end
@@ -685,6 +690,8 @@ module Plomada
       def build_faces
         heights = @segs.map(&:height)
         zs = [0.0] + heights + @openings.flat_map { |o| [o['sill'].to_f, o['sill'].to_f + o['height'].to_f] }
+        # An arch springs at its crown minus its rise; the cells beside it are cut there.
+        zs += @openings.select { |o| o['head'] == 'arch' }.map { |o| o['sill'].to_f + o['height'].to_f - o['arch_rise'].to_f }
         @z_cuts = merge_values(zs, @cfg[:cut_merge_mm])
         @mesh = Mesh.new(@cfg[:vertex_weld_mm])
         @segs.each { |seg| seg.pieces.each { |p| emit_piece(p) } }
@@ -793,6 +800,7 @@ module Plomada
             emit_prism(world, kinds, z0, z1, seg, prefix, c0, c1, open, k)
           end
         end
+        piece.openings.select { |o| arch?(o) }.each { |o| emit_arch(piece, o, zc, prefix) }
       end
 
       # The nominal stations of an arc piece that become cuts: those inside
@@ -816,10 +824,65 @@ module Plomada
 
       # A cell is void when it lies inside an opening. Cuts closer than
       # cut_merge_mm were merged, so the comparison allows that much slack.
+      # An arched opening's cells are void from its sill to the wall top: the
+      # wall above its spring line is emitted whole by emit_arch.
       def void?(piece, c0, c1, z0, z1)
         tol = @cfg[:cut_merge_mm]
         piece.openings.any? do |o|
-          c0 >= o[:s0] - tol && c1 <= o[:s1] + tol && z0 >= o[:z0] - tol && z1 <= o[:z1] + tol
+          top = arch?(o) ? piece.seg.height : o[:z1]
+          c0 >= o[:s0] - tol && c1 <= o[:s1] + tol && z0 >= o[:z0] - tol && z1 <= top + tol
+        end
+      end
+
+      def arch?(o) = o[:rec]['head'] == 'arch'
+
+      # The wall above an arched opening's spring line, as one block: its two
+      # faces are the rectangle up to the wall top minus the arch (tessellated
+      # at the chord tolerance), the soffit is one strip per arch facet between
+      # them, the sides are cut at every row so they cancel against the cells
+      # beside the opening, and the top merges with the wall's top.
+      def emit_arch(piece, o, zc, prefix)
+        seg = piece.seg
+        h = seg.height
+        s0 = o[:s0]
+        s1 = o[:s1]
+        rise = o[:rec]['arch_rise'].to_f
+        zs = o[:z1] - rise
+        rows = zc.select { |z| z > zs + 1e-9 && z < h - 1e-9 }
+        curve = Arc.tessellate([s0, zs], [s1, zs], -2.0 * rise / (s1 - s0), nil, @cfg)
+        meta = { wall: seg.id, seg: seg.index }
+        lift = ->(s, t, z) { to_world(seg, [s, t]) + [z] }
+        { l: seg.off_l, r: seg.off_r }.each do |side, t|
+          ring = [[s0, zs]] + rows.map { |z| [s0, z] } + [[s0, h], [s1, h]] + rows.reverse.map { |z| [s1, z] } +
+                 [[s1, zs]] + curve[1..-2].reverse
+          loop_pts = ring.map { |sv, z| lift.call(sv, t, z) }
+          normal = side == :l ? seg.n : Geometry.scale(seg.n, -1.0)
+          loop_pts = loop_pts.reverse if Geometry.dot3(Geometry.newell(loop_pts), normal + [0.0]).negative?
+          name = side == :l ? 'left' : 'right'
+          @mesh.add(loop_pts, "#{prefix}#{name}", meta.merge(part: name))
+        end
+        ([zs] + rows + [h]).each_cons(2) do |za, zb|
+          [[s0, -1.0], [s1, 1.0]].each do |sv, dir|
+            quad = [lift.call(sv, seg.off_l, za), lift.call(sv, seg.off_r, za), lift.call(sv, seg.off_r, zb),
+                    lift.call(sv, seg.off_l, zb)]
+            out = Geometry.scale(seg.u, dir) + [0.0]
+            quad = quad.reverse if Geometry.dot3(Geometry.newell(quad), out).negative?
+            @mesh.add(quad, "#{prefix}cut#{Geometry.fmt(sv)}#{dir.positive? ? '+' : '-'}", meta.merge(part: 'jamb'))
+          end
+        end
+        top = [lift.call(s0, seg.off_r, h), lift.call(s1, seg.off_r, h), lift.call(s1, seg.off_l, h), lift.call(s0, seg.off_l, h)]
+        top = top.reverse if Geometry.newell(top)[2].negative?
+        @mesh.add(top, "#{prefix}top", meta.merge(part: 'top'))
+        center_z = zs - (Arc.center_radius([s0, zs], [s1, zs], -2.0 * rise / (s1 - s0))[0][1] - zs).abs
+        mid_s = (s0 + s1) / 2.0
+        curve.each_cons(2).with_index do |(a, b), k|
+          quad = [lift.call(a[0], seg.off_l, a[1]), lift.call(b[0], seg.off_l, b[1]), lift.call(b[0], seg.off_r, b[1]),
+                  lift.call(a[0], seg.off_r, a[1])]
+          ms = (a[0] + b[0]) / 2.0
+          mz = (a[1] + b[1]) / 2.0
+          toward = Geometry.scale(seg.u, mid_s - ms) + [center_z - mz]
+          quad = quad.reverse if Geometry.dot3(Geometry.newell(quad), toward).negative?
+          @mesh.add(quad, "#{prefix}arch#{k}", meta.merge(part: 'soffit'))
         end
       end
 
@@ -892,6 +955,7 @@ module Plomada
       def opening_frames
         @segs.flat_map do |seg|
           seg.openings.flat_map do |o|
+            next [] if o[:rec]['curtain'] # a curtain wall's void: its own builder glazes it
             next panel_frames(seg, o) if o[:panels]
 
             mid = (seg.off_l + seg.off_r) / 2.0
