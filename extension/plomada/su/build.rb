@@ -330,9 +330,18 @@ module Plomada
           }]
         end
         hard = (site['paving'] + site['decks']).map { |r| Geometry::Arc.polyline(r['points'], closed: true) }
+        counts = site['objects'].map { |o| Site.key_for(o['item']) }.tally
+        faces = Site.library_faces(model, prep[:library], counts.keys)
+        proxied = Geometry.site_proxy_keys(counts, faces, CONFIG[:site_max_faces])
+        budget = CONFIG[:site_max_faces]
+        proxied.each do |k|
+          why = "to keep the site's library models under site_max_faces #{budget}"
+          prep[:warnings] << "site: #{counts[k]} x #{k} (#{faces[k]} faces each) shown as massing, #{why}"
+        end
         site['objects'].each do |o|
           guard.call("site #{o['item']} #{o['id']}") do
-            if Site.object(model, o, prep[:library], Geometry.site_base(o['at'], hard, state[:site_ground]))
+            proxy = proxied.include?(Site.key_for(o['item']))
+            if Site.object(model, o, prep[:library], Geometry.site_base(o['at'], hard, state[:site_ground]), proxy: proxy)
               state[:site] = (state[:site] || 0) + 1
             else
               prep[:warnings] << "site object #{o['item']} (#{o['id']}): no component in the library"

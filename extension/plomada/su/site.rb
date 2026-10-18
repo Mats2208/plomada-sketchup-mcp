@@ -19,21 +19,51 @@ module Plomada
         'MESA_JARDIN' => 'outdoor_dining', 'PERGOLA' => 'pergola', 'PERSONA' => 'person', 'FAROLA' => 'street_light'
       }.freeze
       TREES = %w[ARBOL PALMERA PINO].freeze
+      # Library keys whose stand-in is an ellipsoid; any other heavy model stands in as a box.
+      VEGETATION = %w[tree palm pine hedge potted_plant].freeze
 
       module_function
 
       def key_for(item) = OBJECTS.fetch(item.to_s.upcase, item.to_s.downcase)
 
-      # Returns the instance, or nil when the library has no component for it.
-      def object(model, rec, library, ground)
+      # Returns the instance, or nil when the library has no component for it. With +proxy+ the instance keeps
+      # its place and size but shows a massing stand-in (Site.proxy_definition) instead of the library model.
+      def object(model, rec, library, ground, proxy: false)
         entry = library && Library.entry(library, 'sitio', key_for(rec['item']))
         return nil unless entry
 
         inst = Library.place(model, model.entities, entry, rec['at'], rec['rotation'], ground)
+        inst.definition = proxy_definition(model, inst.definition, VEGETATION.include?(key_for(rec['item']))) if proxy
         inst.name = "sitio_#{rec['item'].to_s.downcase}"
         inst.layer = SU.tag(model, 'Entorno')
         SU.set_attrs(inst, 'kind' => 'site', 'site_kind' => 'object', 'id' => rec['id'], 'item' => rec['item'],
                            'record' => JSON.generate(rec))
+      end
+
+      # The massing stand-in for a library definition, filling the same bounding box (so an instance switched to
+      # it keeps its place and size): an ellipsoid for vegetation, a box for the rest. One per library model.
+      def proxy_definition(model, defn, round)
+        key = "proxy:#{defn.get_attribute(DICT, 'library_path') || defn.name}"
+        found = model.definitions.find { |d| d.get_attribute(DICT, 'proxy_of') == key }
+        return found if found
+
+        bb = defn.bounds
+        stand_in = model.definitions.add("plomada_proxy_#{defn.name}")
+        SU.add_faces(stand_in.entities, SU.faces_from_loops(Geometry.proxy_faces(SU.to_mm(bb.min), SU.to_mm(bb.max), round)),
+                     always_build: true)
+        SU.soften(stand_in.entities, 40.0) if round
+        material = SU.material(model, round ? 'MAT_vegetacion' : 'MAT_hormigon')
+        stand_in.entities.grep(Sketchup::Face).each { |f| f.material = material }
+        stand_in.set_attribute(DICT, 'proxy_of', key)
+        stand_in
+      end
+
+      # Faces of one library model per site key ({key => faces}), loading what the library has.
+      def library_faces(model, library, keys)
+        keys.to_h do |k|
+          entry = library && Library.entry(library, 'sitio', k)
+          [k, entry ? Library.face_count(Library.definition(model, entry[:path], entry[:part])) : 0]
+        end
       end
 
       def paving(model, rec, ground, deck: false)

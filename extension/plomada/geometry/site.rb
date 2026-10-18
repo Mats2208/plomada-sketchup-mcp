@@ -2,6 +2,7 @@
 
 require_relative 'core'
 require_relative 'parts'
+require_relative 'planters'
 require_relative 'stairs'
 
 module Plomada
@@ -30,6 +31,46 @@ module Plomada
       raise InvalidParams, "paving top #{fmt_mm(top)} must be above the ground #{fmt_mm(ground)}" unless top > ground
 
       prism_faces(ccw(points), ground, top)
+    end
+
+    # The library keys whose site objects stand in as massing so that the
+    # site's library models stay within +budget+ faces. +counts+ and +faces+
+    # are {key => objects placed} and {key => faces of one model}; the
+    # heaviest contribution (faces x objects) goes first, ties by key.
+    #
+    # A site of 32 hedges (537,600 faces each), 104 ficus (66,586) and 44
+    # sedans (111,922) is about 29 M faces, and SketchUp 2025 crashed
+    # twice right after building it.
+    def site_proxy_keys(counts, faces, budget)
+      weight = ->(k, n) { n * faces.fetch(k, 0) }
+      total = counts.sum { |k, n| weight.call(k, n) }
+      keys = []
+      counts.sort_by { |k, n| [-weight.call(k, n), k.to_s] }.each do |k, n|
+        break if total <= budget
+
+        keys << k
+        total -= weight.call(k, n)
+      end
+      keys
+    end
+
+    # The stand-in for a heavy library model, filling its bounding box
+    # (+bmin+, +bmax+ in mm, definition coordinates): an ellipsoid for
+    # vegetation (+round+), a box for the rest. Closed face loops.
+    def proxy_faces(bmin, bmax, round)
+      unless round
+        ring = ccw([[bmin[0], bmin[1]], [bmax[0], bmin[1]], [bmax[0], bmax[1]], [bmin[0], bmax[1]]])
+        return prism_faces(ring, bmin[2], bmax[2])
+      end
+
+      w = bmax[0] - bmin[0]
+      d = bmax[1] - bmin[1]
+      h = bmax[2] - bmin[2]
+      cx = (bmin[0] + bmax[0]) / 2.0
+      cy = (bmin[1] + bmax[1]) / 2.0
+      sphere_faces([0.0, 0.0], 0.5, 0.0, 8, 12).map do |f|
+        f.map { |p| [cx + (p[0] * w), cy + (p[1] * d), bmin[2] + (p[2] * h)] }
+      end
     end
 
     # Where a site object stands: on top of the paving or deck it falls on,

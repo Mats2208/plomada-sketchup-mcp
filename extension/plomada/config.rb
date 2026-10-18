@@ -115,6 +115,7 @@ module Plomada
     planter_attempts: 30,                  # candidates per active sample (Bridson's k)
     plant_massing_mm: 600.0,               # mm, diameter of the sphere standing in for a missing plant
     plant_max_faces: 50_000,               # faces; a heavier library plant is replaced by the massing sphere
+    site_max_faces: 8_000_000,             # faces of all site library models; the heaviest kinds over it become massing
 
     # --- columns (tag Estructura) --------------------------------------------------
     column_min_sides: 16,                  # sides of a round column, at least

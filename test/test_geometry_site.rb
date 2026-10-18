@@ -100,4 +100,24 @@ class TestGeometrySite < Minitest::Test
     assert_equal(-20.0, G.site_base([1500, 3000], [drive], -150.0))
     assert_equal(-150.0, G.site_base([5000, 3000], [drive], -150.0))
   end
+
+  def test_the_heaviest_site_models_go_to_massing_first_until_the_budget_holds
+    counts = { 'hedge' => 32, 'tree' => 104, 'car_sedan' => 44, 'pine' => 50 }
+    faces = { 'hedge' => 537_600, 'tree' => 66_586, 'car_sedan' => 111_922, 'pine' => 10_200 }
+    # 17.2 M + 6.9 M + 4.9 M + 0.5 M = 29.5 M; dropping the hedges leaves 12.3 M, then the ficus 5.4 M
+    assert_equal %w[hedge tree], G.site_proxy_keys(counts, faces, 8_000_000)
+    assert_equal [], G.site_proxy_keys(counts, faces, 30_000_000)
+    assert_equal %w[hedge tree car_sedan pine], G.site_proxy_keys(counts, faces, 0)
+  end
+
+  def test_a_proxy_fills_the_models_box_and_is_closed
+    box = G.proxy_faces([-1000, -500, 0], [1000, 500, 1500], false)
+    blob = G.proxy_faces([-2000, -2000, 0], [2000, 2000, 6000], true)
+    [box, blob].each { |faces| assert manifold?(faces) }
+    pts = blob.flatten(1)
+    assert_in_delta(-2000.0, pts.map { |p| p[0] }.min, 1.0)
+    assert_in_delta(6000.0, pts.map { |p| p[2] }.max, 1.0)
+    assert_in_delta(0.0, pts.map { |p| p[2] }.min, 1.0)
+    assert_equal [0.0, 1500.0], zs(box).minmax
+  end
 end

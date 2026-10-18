@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-10-18
+
+### Fixed
+
+- **A heavy site no longer brings SketchUp down.** The site's library models now have a face budget:
+  `site_max_faces`, 8,000,000 by default.
+  - **How.** When the site's objects would go over the budget, the heaviest kinds stand in as massing, counted as
+    faces of one model times how many are placed. Vegetation becomes an ellipsoid and anything else a box, each
+    filling the model's own bounding box, so every object keeps its place and size. The build warns which kinds
+    and why.
+  - **The bug.** A 10 ha site with 32 `ARBUSTO` (the hedge model has 537,600 faces), 104 `ARBOL` (66,586) and 44
+    `AUTO` (111,922) came to about 29 M faces. SketchUp 2025 crashed twice seconds after building it.
+    `plant_max_faces` only protected planters.
+  - **Verified live.** 32 hedges and 5 pines: the hedges became 96-face ellipsoids and the pines stayed real.
+
 ## [0.6.0] - 2026-10-18
 
 0.6.0, ANY CAD. A plan no longer has to come from AutoCAD MCP Pro: any CAD or AutoCAD MCP that draws lines,
@@ -328,6 +343,7 @@ First release. The SketchUp extension and the Python bridge version together.
 - PBR is detected through `Sketchup::Material#metallic_factor=`, the method SketchUp 2025 actually has, not through
   `metalness=`.
 
+[0.6.1]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.4.0

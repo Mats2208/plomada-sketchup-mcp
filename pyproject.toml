@@ -1,6 +1,6 @@
 [project]
 name = "plomada-bridge"
-version = "0.6.0"
+version = "0.6.1"
 description = "SketchUp MCP: any CAD plan (AutoCAD MCPs, DXF, DWG, a prompt) in, the exact 3D building in SketchUp out."
 readme = "README.md"
 license = "MIT"
