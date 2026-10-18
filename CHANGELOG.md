@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-18
 
 0.6.0, ANY CAD. A plan no longer has to come from AutoCAD MCP Pro: any CAD or AutoCAD MCP that draws lines,
 arcs, polylines, text and blocks on named layers hands Plomada the exact building, and what Plomada writes is a
