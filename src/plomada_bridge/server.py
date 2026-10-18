@@ -10,19 +10,24 @@ from __future__ import annotations
 import asyncio
 import base64
 import functools
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import ezdxf
 from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__
+from .cadfile import TEMP_PREFIX, as_dxf, open_file, to_dwg
 from .config import BridgeConfig, load_config
 from .connection import SketchUpClient
 from .dxf import DxfPlanError, read_plan
-from .dxfwrite import write_plan
+from .dxfwrite import build_doc, write_plan
 from .errors import NOT_RESPONDING, BridgeError, NotResponding, describe
 from .models import (
     ELEVATION_MAX_MM,
@@ -47,16 +52,22 @@ from .models import (
     Wall,
     describe_error,
 )
+from .preview import PreviewError, render, save
 
 INSTRUCTIONS = """\
-Plomada models architecture inside a running SketchUp 2025 (Windows) from plans drawn by
-AutoCAD MCP Pro. All lengths are millimetres in world coordinates; z is up, the floor is z 0.
+Plomada models architecture inside a running SketchUp 2025 (Windows) from plans drawn in any CAD.
+All lengths are millimetres in world coordinates; z is up, the floor is z 0.
 
 Typical flow: status -> build_from_autocad(dxf_path) -> capture_view -> get_plan.
-build_from_autocad turns the ACADMCP_ARCH records of a DXF into manifold walls with real
-openings, window and door components, a floor slab, a roof, stairs and room labels, as ONE undo
-step. Several floors: one DXF per floor, built in order with storey="N00", "N01", ...; each new
-storey is stacked on the one below, its slab gets the stair wells, the roof below is replaced.
+build_from_autocad turns a DXF or DWG into manifold walls with real openings, window and door
+components, a floor slab, a roof, stairs and room labels, as ONE undo step. It reads AutoCAD MCP
+Pro's ACADMCP_ARCH records, Plomada's PLOMADA records, or the PLOMADA-* layer standard any CAD or
+AutoCAD MCP can draw (docs/drawing-standard.md): walls as lines, arcs or polylines on
+PLOMADA-MURO-<thickness mm>, doors and windows as a line from jamb to jamb on the wall axis on
+PLOMADA-PUERTA[-<height>] and PLOMADA-VENTANA[-<sill>-<height>], room names on PLOMADA-AMBIENTE,
+stairs as a line up the run on PLOMADA-ESCALERA-<width>, blocks on PLOMADA-MUEBLE.
+Several floors: one DXF per floor, built in order with storey="N00", "N01", ...; each new storey
+is stacked on the one below, its slab gets the stair wells, the roof below is replaced.
 Furniture blocks become real models from the component library where it maps them (furniture=
 "library", the default) or simple boxes ("massing"). The ground-floor DXF can carry the site:
 SITIO_<NAME> blocks (ARBOL, PALMERA, PINO, ARBUSTO, MACETA, AUTO, SUV, PICKUP, REPOSERA,
@@ -69,7 +80,8 @@ when the model has several.
 Curves: any polyline vertex (wall axis, outline, hole, path) may be [x, y, bulge], bulge = tan(sweep / 4),
 positive counter-clockwise, at most 1. Plans also hold slabs, columns, curtain_walls, railings, planters,
 pools, ramps and arched openings; elevation puts a storey at any height (SS below 0), ground_level_mm sets
-the ground. Route: author PlanInput JSON once -> build_plan -> write_plan_dxf + AutoCAD drawing_open.
+the ground. Route: author PlanInput JSON once -> build_plan -> write_plan_dxf (open=true lands it in
+AutoCAD); preview_plan shows a plan or a DXF as a PNG without SketchUp.
 If a mutating call times out or the connection drops, its outcome is unknown: call get_plan or
 status before retrying. execute_ruby is off unless the user enables it in SketchUp.
 """
@@ -155,6 +167,12 @@ class PlanInput(BaseModel):
     pools: Annotated[list[Pool], Field(default_factory=list, description="recessed or raised pools, any storey")]
     ramps: Annotated[list[Ramp], Field(default_factory=list, description="ramps from z_start to z_end, at most 20 %")]
     site_on_ground: Annotated[bool, Field(description="place this plan's site at ground_level_mm itself")] = False
+
+
+UnitsChoice = Annotated[
+    Literal["auto", "mm", "cm", "m", "in", "ft"],
+    Field(description="drawing unit; auto follows $INSUNITS (records are always mm; inches and feet must be given)"),
+]
 
 
 class Bridge:
@@ -355,7 +373,12 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
     @exact_errors
     async def build_from_autocad(
         dxf_path: Annotated[
-            str, Field(min_length=1, description="DXF exported by AutoCAD MCP Pro (ACADMCP_ARCH records)")
+            str,
+            Field(
+                min_length=1,
+                description="a .dxf or .dwg (a DWG needs the ODA File Converter or LibreDWG) holding AutoCAD MCP "
+                "Pro records, PLOMADA records or the PLOMADA-* layer standard",
+            ),
         ],
         ctx: Context,
         storey_height: Annotated[
@@ -390,12 +413,14 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         ] = "library",
         ground_level_mm: GroundLevel = None,
         deadline_ms: DeadlineMs = cfg.default_deadline_ms,
+        units: UnitsChoice = "auto",
     ) -> dict[str, Any]:
-        """Builds the exact 3D house of an AutoCAD MCP Pro plan in one call and one undo step: manifold
-        walls with real openings (jambs, sills, soffits), window and door components with glass and leaves,
-        floor slab, roof and room labels. The DXF is read by the bridge; SketchUp only gets the plan."""
+        """Builds the exact 3D house of a CAD plan in one call and one undo step: manifold walls with real
+        openings (jambs, sills, soffits), window and door components with glass and leaves, floor slab, roof
+        and room labels. The plan comes from AutoCAD MCP Pro records, PLOMADA records or the PLOMADA-* layer
+        standard of any CAD; the bridge reads the file, SketchUp only gets the plan."""
         try:
-            parsed = await asyncio.to_thread(read_plan, dxf_path, storey_height)
+            parsed = await asyncio.to_thread(read_plan, dxf_path, storey_height, units)
         except DxfPlanError as exc:
             raise ToolError(
                 f"build_from_autocad refused its input (-32004): {exc}. Fix the DXF or the path and call it again."
@@ -419,6 +444,9 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         res = await b.mutate("build_from_autocad", "build_plan", params, ctx, deadline_ms)
         res["dxf"] = str(parsed.path)
         res["records"] = parsed.records
+        res["units"] = parsed.units
+        if parsed.units_note:
+            res["units_note"] = parsed.units_note
         res["warnings"] = list(res.get("warnings", [])) + parsed.warnings
         return res
 
@@ -672,7 +700,10 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
     async def write_plan_dxf(
         plan: Annotated[PlanInput, Field(description="the plan build_plan takes, in mm")],
         path: Annotated[
-            str, Field(min_length=5, pattern=r"(?i)\.dxf$", description="output .dxf file; its folder is created")
+            str,
+            Field(
+                min_length=5, pattern=r"(?i)\.(dxf|dwg)$", description="output .dxf or .dwg file; its folder is created"
+            ),
         ],
         storey: Annotated[str, Field(pattern=STOREY_PATTERN, description="storey name, e.g. N00, N01, SS")] = "N00",
         storey_height: Annotated[float, Field(gt=0, le=10_000, description="storey height, mm")] = cfg.storey_height_mm,
@@ -680,11 +711,30 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             float | None,
             Field(ge=ELEVATION_MIN_MM, le=ELEVATION_MAX_MM, description="mm of this storey's floor; default stacked"),
         ] = None,
+        style: Annotated[
+            Literal["drawing", "records", "layers"],
+            Field(
+                description="drawing: an architectural drawing (faces cut at openings, poché, door swings, window "
+                "lines, room areas, stairs) over the data; records: the 0.5 output; layers: the PLOMADA-* layer "
+                "standard with no XDATA, returning lost: what it cannot carry"
+            ),
+        ] = "drawing",
+        format: Annotated[
+            Literal["dxf", "dwg"], Field(description="dwg converts through the ODA File Converter or LibreDWG")
+        ] = "dxf",
+        open: Annotated[bool, Field(description="open the written file with the OS default app (AutoCAD)")] = False,
     ) -> dict[str, Any]:
-        """Writes the plan as a millimetre DXF for AutoCAD (open it with drawing_open): wall axes with real
-        arcs and both faces, slabs, columns, railings and the other records on PLOMADA-* layers, openings,
-        rooms and stairs as AutoCAD MCP Pro records, furniture and site blocks. build_from_autocad reads it
-        back exactly. Writes the file only; SketchUp is not involved."""
+        """Writes the plan as a millimetre DXF or DWG for AutoCAD: wall axes with real arcs, slabs, columns,
+        railings and the other records on PLOMADA-* layers, openings, rooms and stairs as AutoCAD MCP Pro
+        records, furniture and site blocks, and (style drawing) the architectural documentation on A-* layers.
+        build_from_autocad reads it back exactly. With open it lands in AutoCAD without any AutoCAD MCP.
+        Writes the file only; SketchUp is not involved."""
+        target = Path(path)
+        if target.suffix.lower() != f".{format}":
+            raise ToolError(
+                f"write_plan_dxf refused its input (-32004): path ends in {target.suffix} but format is {format}. "
+                "Fix it and call again."
+            )
         raw = {**plan.model_dump(), "storey": {"name": storey, "height": storey_height, "elevation": elevation}}
         try:
             checked = Plan.model_validate(raw)
@@ -692,10 +742,76 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             raise ToolError(
                 f"write_plan_dxf refused its input (-32004): {describe_error(exc, 'plan')}. Fix it and call again."
             ) from None
+
+        def write() -> dict[str, Any]:
+            if format == "dxf":
+                return write_plan(checked, target, style)
+            tmp = Path(tempfile.mkdtemp(prefix=TEMP_PREFIX))
+            try:
+                out = write_plan(checked, tmp / (target.stem + ".dxf"), style)
+                out["path"] = str(to_dwg(Path(out["path"]), target))
+                return out
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
         try:
-            return await asyncio.to_thread(write_plan, checked, path)
+            out = await asyncio.to_thread(write)
         except OSError as exc:
             raise ToolError(f"write_plan_dxf could not write {path}: {exc.strerror or exc}") from None
+        except DxfPlanError as exc:
+            raise ToolError(f"write_plan_dxf could not write {path}: {exc}") from None
+        out["format"] = format
+        if open:
+            try:
+                open_file(Path(out["path"]))
+            except OSError as exc:
+                raise ToolError(f"write_plan_dxf wrote {out['path']} but could not open it: {exc}") from None
+            out["opened"] = True
+        return out
+
+    @mcp.tool(annotations=READ, structured_output=False)
+    @exact_errors
+    async def preview_plan(
+        plan: Annotated[PlanInput | None, Field(description="a plan to draw, as write_plan_dxf draws it")] = None,
+        dxf_path: Annotated[str | None, Field(min_length=1, description="or a .dxf / .dwg to draw as it plots")] = None,
+        width: Annotated[int, Field(ge=320, le=4096, description="image width, px")] = 1600,
+    ) -> list[Any]:
+        """A PNG of a plan or a drawing without SketchUp or AutoCAD: a plan is drawn as write_plan_dxf's drawing
+        style draws it (wall faces and poché, doors, windows, rooms, stairs), a DXF or DWG as it plots (layers
+        that do not plot, are off or frozen are left out). Black on white, shrunk until under 350 KB. Returns
+        the image and its file path in %TEMP%."""
+        if (plan is None) == (dxf_path is None):
+            raise ToolError("preview_plan refused its input (-32004): give plan or dxf_path, one of them. Fix it.")
+        checked: Plan | None = None
+        if plan is not None:
+            try:
+                checked = Plan.model_validate(plan.model_dump())
+            except ValidationError as exc:
+                raise ToolError(
+                    f"preview_plan refused its input (-32004): {describe_error(exc, 'plan')}. Fix it and call again."
+                ) from None
+
+        def draw() -> tuple[bytes, int, int, str]:
+            if checked is not None:
+                return (*render(build_doc(checked, "drawing")[0], width), "plan")
+            src = Path(dxf_path or "")
+            if not src.is_file():
+                raise DxfPlanError(f"dxf_path {str(src)!r} is not a file")
+            dxf = as_dxf(src)
+            try:
+                return (*render(ezdxf.readfile(dxf), width), src.stem)
+            except (OSError, ezdxf.DXFStructureError) as exc:
+                raise DxfPlanError(f"cannot read {src.name} as DXF: {exc}") from None
+            finally:
+                if dxf != src:
+                    shutil.rmtree(dxf.parent, ignore_errors=True)
+
+        try:
+            png, w, h, stem = await asyncio.to_thread(draw)
+        except (DxfPlanError, PreviewError) as exc:
+            raise ToolError(f"preview_plan refused its input (-32004): {exc}. Fix it and call again.") from None
+        path = save(png, stem)
+        return [Image(data=png, format="png"), {"path": str(path), "width": w, "height": h, "bytes": len(png)}]
 
     @mcp.tool(annotations=_mut(destructive=False, idempotent=True))
     @exact_errors
