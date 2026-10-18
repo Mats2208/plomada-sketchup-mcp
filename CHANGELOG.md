@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`plan_from_dxf`: a draft plan from an ordinary DXF.** An architect's drawing, or linework from any
+  AutoCAD MCP, with no ACADMCP_ARCH or PLOMADA records: walls as parallel lines, closed outlines or
+  hatches (blocks exploded, units checked against the walls), doors as a leaf and a swing arc or a block,
+  windows as lines across a gap or a block, rooms as TEXT with their area. Faces pair when they are
+  parallel, mutually nearest and longer than they are apart; runs are joined into L corners, T stems and
+  chained polylines the solver accepts; gaps become doors, windows or reported unclassified gaps. The tool
+  is read-only and returns the plan with a report (layers used, units, per-wall paired share, unclassified
+  gaps, dropped pieces, unpaired lines, issues, assumptions, a verdict) for the agent to review before
+  `build_plan`. The four AutoCAD MCP Pro fixtures, read without their records, match them exactly (walls
+  and openings recall and precision 1.000). See [docs/infer.md](docs/infer.md).
+
 ## [0.5.0] - 2026-10-17
 
 CURVAS. One plan, written once, now builds a non-orthogonal building: curved walls with real openings, a curved slab

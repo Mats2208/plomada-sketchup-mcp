@@ -110,7 +110,7 @@ ROLE_TOKENS: dict[str, tuple[str, ...]] = {
 }
 FURNITURE_BLOCK = re.compile(
     r"^(ARCH_|SITIO_)|MUEBLE|MOBIL|FURN|CAMA|BED|SOFA|MESA|TABLE|SILLA|CHAIR|INODORO|WC|LAVA|DUCHA|BANERA|BATH|"
-    r"ARBOL|TREE|AUTO|CAR\b",
+    r"ROPERO|ARMARIO|CLOSET|WARDROBE|PLACARD|ESTANTE|SHELF|MESADA|COUNTER|ARBOL|TREE|AUTO|CAR\b",
     re.IGNORECASE,
 )
 AREA_TEXT = re.compile(
@@ -2563,7 +2563,9 @@ class _Inferrer:
             "windows": windows,
             "rooms": len(plan.rooms),
         }
+        units = rep["units"]
         rep["assumptions"] += [
+            f"drawing units {units['unit']} ({units['source']}), 1 unit = {units['scale_to_mm']:g} mm",
             f"door height {o.door_height:g} mm, window sill {o.window_sill:g} mm and height {o.window_height:g} mm: "
             "a plan does not draw them",
             "every wall is centre-justified on the midline of its faces, material brick, storey height",
