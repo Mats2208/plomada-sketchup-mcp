@@ -374,7 +374,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
     @mcp.tool(annotations=READ)
     @exact_errors
     async def plan_from_dxf(
-        path: Annotated[str, Field(min_length=1, description="an ordinary architectural DXF: linework, no records")],
+        path: Annotated[str, Field(min_length=1, description="an ordinary DXF or DWG: linework, no records")],
         layers: Annotated[
             LayerRoles | None,
             Field(

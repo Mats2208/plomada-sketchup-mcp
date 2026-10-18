@@ -39,7 +39,12 @@ aliases. The full standard is in `docs/drawing-standard.md` in the repo.
 | `PLOMADA-LOSA`, `-BARANDA`, `-JARDINERA`, `-MURO-CORTINA`, `-PILETA`, `-COLUMNA` (CIRCLE = round) | polylines / circles | Slab, railing, planter, curtain wall, pool, column, with defaults. |
 | `SITIO-*` layers, `SITIO_<NAME>` blocks | as in route A | The site. |
 
-**Units.** `$INSUNITS` is honoured (mm, cm, m, in, ft). Pass `units` to override it.
+**Units.**
+- Coordinates are scaled from `$INSUNITS`: mm, cm and m are read as declared.
+- Inches and feet are **refused** until you pass `units="in"` / `"ft"`, or `"mm"` when the header lies.
+- Metres that would make a building over 1 km wide are read as mm, with a `units_note` in the result.
+- A drawing with records is always mm.
+- Numbers in layer names are always mm.
 
 **How to instruct another AutoCAD MCP**, for example:
 - "Draw a closed polyline (0,0) (10000,0) (10000,8000) (0,8000) on layer PLOMADA-MURO-200."

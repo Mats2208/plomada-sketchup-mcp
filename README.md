@@ -1,62 +1,135 @@
 <div align="center">
 
-# Plomada
+# Plomada · AutoCAD to SketchUp MCP
 
-**Hand Claude an AutoCAD plan, or one prompt's plan JSON, and get the exact 3D building in SketchUp: curved manifold walls with real openings, cantilevered slabs, glass railings, planters, pools, ramps and free storey heights, one Ctrl+Z per call.**
+**Tell your AI _"build this plan in SketchUp"_ and get the exact building:**
+- manifold walls with real openings;
+- storeys, curves, slabs, balconies, railings, roofs and stairs;
+- furniture and the site;
+- one Ctrl+Z per call.
 
-[![Version](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](https://github.com/Mats2208/plomada-mcp/releases)
+**The plan can come from any AutoCAD MCP, an architect's DWG, a photo of a sketch, or a single prompt.**
+
+[![Version](https://img.shields.io/badge/version-0.6.0-blue?style=flat-square)](https://github.com/Mats2208/plomada-mcp/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/Mats2208/plomada-mcp/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/Mats2208/plomada-mcp/actions/workflows/ci.yml)
 [![SketchUp](https://img.shields.io/badge/SketchUp-2025%20Pro-005F9E?style=flat-square)](https://www.sketchup.com)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-00B4D8?style=flat-square)](https://modelcontextprotocol.io)
+[![Skill](https://img.shields.io/badge/agent%20skill-included-8A2BE2?style=flat-square)](skill/SKILL.md)
 [![License](https://img.shields.io/github/license/Mats2208/plomada-mcp?style=flat-square&color=green)](LICENSE)
 
 <br/>
 
-<table>
-<tr>
-<td width="50%"><img src="docs/img/e2e_shaded.jpg" alt="The reference house built by Plomada in SketchUp, shaded: flat roof with overhang, floor-to-ceiling windows, wooden entrance door" width="100%"/></td>
-<td width="50%"><img src="docs/img/e2e_lines.jpg" alt="The same house in wireframe: partitions, door frames, window frames and room labels inside the walls" width="100%"/></td>
-</tr>
-</table>
-<sub>Both images came back from <code>capture_view</code> in the e2e run, 139 ms and 114 ms after the call. Look at the wireframe: the three
-doors in the partition, the two partitions butting into it and into the exterior wall, and the room labels on the floor
-(<strong>01 LIVING 58.48 m²</strong>) all came from the DXF records, not from a prompt.</sub>
+<img src="docs/img/plano_a_casa.gif" alt="An AutoCAD plan of a house with a garage, a pool and trees fades into the same house built by Plomada in SketchUp: white walls, the entrance door, palms, potted plants, then the back garden with the pool" width="100%"/>
+
+<sub>One DXF (<code>tests/fixtures/casa_completa_N00.dxf</code>) and one call. First the plan as it plots, then two of
+the scenes <code>auto_scenes</code> made in SketchUp. It built the house, the garage, 17 furniture blocks, the pool,
+deck, paving and fence, and 21 site objects in 14 s.</sub>
 
 <br/><br/>
 
 <table>
 <tr>
+<td align="center"><strong>5</strong><br/><sub>ways in, one builder</sub></td>
 <td align="center"><strong>0.91 s</strong><br/><sub>DXF to finished house (p50)</sub></td>
-<td align="center"><strong>29</strong><br/><sub>MCP tools</sub></td>
-<td align="center"><strong>31 ms</strong><br/><sub>model_info p50</sub></td>
-<td align="center"><strong>34 ms</strong><br/><sub>longest pump tick</sub></td>
-<td align="center"><strong>284</strong><br/><sub>tests, no SketchUp needed</sub></td>
+<td align="center"><strong>31</strong><br/><sub>MCP tools</sub></td>
+<td align="center"><strong>375</strong><br/><sub>tests, no SketchUp needed</sub></td>
+<td align="center"><strong>0</strong><br/><sub>booleans, internal faces</sub></td>
 </tr>
 </table>
 
-<sub>[The problem](#the-problem) · [What it does](#what-it-does) · [Numbers](#every-number-here-was-measured) · [Install](#install) · [Use](#use) · [How it works](#how-it-works) · [Comparison](#how-it-compares) · [Limits](#what-it-does-not-do)</sub>
+<sub>[Five ways in](#five-ways-in) · [Showcase](#showcase) · [What it builds](#what-it-builds) · [Numbers](#every-number-here-was-measured) · [Install](#install) · [Agent skill](#the-agent-skill) · [How it works](#how-it-works) · [Limits](#what-it-does-not-do)</sub>
 
 </div>
 
 ---
 
-## 0.5: curves, and a real building to prove them
+## Five ways in
+
+Every route ends in the same builder. Two are exact, one gives a draft you review, and two are as good as the plan the
+agent writes.
+
+| You have | Plomada reads it with | Exact? |
+|---|---|---|
+| **[AutoCAD MCP Pro](https://github.com/U-C4N/Autocad-MCP)** drawing with its `arch_*` tools. No AutoCAD licence needed: its ezdxf backend runs headless. | `build_from_autocad(dxf)` reads the walls, openings, rooms and stairs it stores as records. | yes |
+| **Any other AutoCAD or CAD MCP**, or a person at the keyboard | `build_from_autocad(dxf or dwg)` reads lines, arcs, polylines, text and blocks drawn on the [`PLOMADA-*` layer standard](docs/drawing-standard.md). | yes |
+| **An ordinary drawing**: an architect's DXF or DWG, with walls as parallel lines and doors as a leaf and a swing | `plan_from_dxf(path)` returns a **draft** plan and a report of everything it was unsure of. The agent reviews it, then calls `build_plan`. | draft |
+| **A prompt** | The agent writes the plan JSON, `preview_plan` checks it and `build_plan` builds it. `write_plan_dxf(open=true)` also opens the same plan **in AutoCAD** as a drawing. | as written |
+| **An image or PDF of a plan** | The agent measures it into the plan JSON, then it goes as a prompt does. | as written |
+
+The layer standard is what makes Plomada independent of any one CAD tool. Tell any AutoCAD MCP:
+
+> _"Draw a closed polyline (0,0) (10000,0) (10000,8000) (0,8000) on layer PLOMADA-MURO-200, a line from (2000,0) to
+> (2900,0) on layer PLOMADA-PUERTA, the text 'Living' at (3000,4000) on layer PLOMADA-AMBIENTE, and save it as DXF."_
+
+`build_from_autocad` then builds that wall, that door and that room, exactly.
+- **Units.** The drawing units (`$INSUNITS`) are read, so a drawing in metres or centimetres works.
+- **DWG.** It goes through the free ODA File Converter or LibreDWG, when either is installed.
+- **No SketchUp needed** for `plan_from_dxf`, `write_plan_dxf` and `preview_plan`: they run in the bridge.
+
+## Showcase
 
 <table>
 <tr>
-<td width="100%"><img src="docs/img/hotel_lado_a_lado_frente.jpg" alt="Left: a student's hand-made SketchUp model of a hotel. Right: the same building generated by Plomada 0.5, same camera: curved cantilevered balconies with white bands and glass railings, the west cantilever on round columns, the curved east tower" width="100%"/></td>
+<td width="50%"><img src="docs/img/plano_minimalista.png" alt="The reference house plan: exterior walls, two partitions, eleven openings, four room labels with areas" width="100%"/></td>
+<td width="50%"><img src="docs/img/e2e_shaded.jpg" alt="The same house built by Plomada in SketchUp, shaded: flat roof with overhang, floor-to-ceiling windows, wooden entrance door" width="100%"/></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/img/plano_dos_plantas_N00.png" alt="Ground floor plan of the two-storey house with the L stair and the catalogue furniture" width="100%"/></td>
+<td width="50%"><img src="docs/img/dos_plantas_aerea.png" alt="The two-storey house with a hip roof on a lawn, from the aerial scene auto_scenes made" width="100%"/></td>
 </tr>
 </table>
-<sub>Left, a student's hand-made SketchUp model of a hotel project; right, Plomada 0.5 building the same project from
-a DXF of it, from the same camera. The images are shown with the author's permission and are not covered by the
-MIT license (see <a href="docs/img/NOTICE.md">docs/img/NOTICE.md</a>); the drawing and the model stay with their author.</sub>
+<sub>Left, the DXF as it plots (<code>preview_plan</code>). Right, what <code>build_from_autocad</code> made of it.
+Top, the reference house: 4 walls, 11 openings and 4 rooms in 0.91 s. Bottom, the two-storey fixture: two DXF files,
+a 17-riser L stair and 16 catalogue pieces.</sub>
+
+<img src="docs/img/curvas.gif" alt="A curved hotel wing plan fades into the SketchUp model: the quarter-circle corner with its roof slab, then the cantilevered balcony with a glass railing" width="100%"/>
+
+<sub>Curves (0.5). First the curved-wing DXF, then the same wing in SketchUp: its quarter-circle wall, the curved slab
+and a glass railing along a cantilevered balcony.</sub>
+
+**From an ordinary drawing.** On the left, a drawing made with no Plomada in mind: in metres, every wall a separate
+rectangle, doors and windows as blocks, plus a grid, a dimension and a bed against a wall. On the right,
+`plan_from_dxf`'s draft written back with `write_plan_dxf`:
+- the walls became axes with their thickness;
+- the door blocks became doors, on the right side and with the right swing;
+- the window block became a window;
+- the MTEXT became a room with its area;
+- the bed did not become a wall.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/inferir_original.png" alt="An ordinary drawing: wall rectangles, door blocks with swings, a window block, grid lines, a dimension, a bed" width="100%"/></td>
+<td width="50%"><img src="docs/img/inferir_resultado.png" alt="The inferred plan drawn by write_plan_dxf: two walls with poché, two doors with swings, a window, two room labels" width="100%"/></td>
+</tr>
+</table>
+
+On the four AutoCAD MCP Pro fixtures read **without** their records, the inferrer gets every wall and every opening
+back: recall and precision 1.000, worst axis deviation 0.00 mm. How it works, and where it fails:
+[docs/infer.md](docs/infer.md).
+
+**From a prompt to AutoCAD.** `write_plan_dxf` writes a drawing a person can work on:
+- wall faces with real arcs, cut at the openings, with a solid poché;
+- door leaves and swings, and window lines;
+- room names and stair flights.
+
+The data layers sit underneath, so `build_from_autocad` reads the file back exactly after someone edits it in AutoCAD.
+
+<p align="center"><img src="docs/img/write_plan_dxf_dibujo.png" alt="A house with a curved corner written by write_plan_dxf: walls with poché cut at the openings, door swings, a window on the curve, a stair, room names" width="80%"/></p>
+
+**On a real building.** On the left, a student's hand-made SketchUp model of a hotel project. On the right, Plomada 0.5
+building the same project from a DXF of it, seen from the same camera.
+
+<img src="docs/img/hotel_lado_a_lado_frente.jpg" alt="Left: a student's hand-made SketchUp model of a hotel. Right: the same building generated by Plomada 0.5, same camera: curved cantilevered balconies with white bands and glass railings, the west cantilever on round columns, the curved east tower" width="100%"/>
+
+<sub>Shown with the author's permission. These images are not covered by the MIT license (see
+<a href="docs/img/NOTICE.md">docs/img/NOTICE.md</a>). The drawing and the model stay with their author.</sub>
 
 ## The problem
 
-AutoCAD MCP Pro draws a plan with real architectural records: walls with an axis and a thickness, doors and windows hosted
-at an offset along them, rooms with their area. Getting that into SketchUp as a model you can render usually means
-importing the linework and rebuilding every wall by hand.
+An architectural plan holds walls with an axis and a thickness, doors and windows hosted along them, and rooms with
+their area. Getting that into SketchUp as a model you can render usually means importing the linework and rebuilding
+every wall by hand.
 
 The SketchUp MCP servers that exist today make that worse in three ways:
 
@@ -67,10 +140,10 @@ The SketchUp MCP servers that exist today make that worse in three ways:
 - **They freeze or starve SketchUp.** Servers built on Ruby threads only run while SketchUp's main thread yields, and a
   long operation inside one call blocks the UI until it ends.
 
-## What it does
+## What it builds
 
-`build_from_autocad("casa_minimalista.dxf")` reads the ACADMCP_ARCH records in the bridge, solves every wall junction in
-pure Ruby, and builds the house inside a running SketchUp, one small step per UI tick:
+`build_from_autocad("casa_minimalista.dxf")` reads the plan in the bridge and solves every wall junction in pure Ruby.
+Then it builds the house inside a running SketchUp, one small step per UI tick:
 
 | | Feature | Details |
 |---|---|---|
@@ -160,8 +233,27 @@ The script copies `plomada.rb` and `plomada\` into the SketchUp Plugins folder a
 It registers `plomada-mcp` for Claude Code with `claude mcp add -s user sketchup`. It also offers, y/n, to move the old
 Tarkiin plugin out of the Plugins folder. Restart SketchUp, reconnect the MCP, and call `status`.
 
-To install by hand instead, add [`plomada-0.5.0.rbz`](https://github.com/Mats2208/plomada-mcp/releases) through
+To install by hand instead, add [`plomada-0.6.0.rbz`](https://github.com/Mats2208/plomada-mcp/releases) through
 **Extensions > Extension Manager > Install Extension**, then register `.venv\Scripts\plomada-mcp.exe` as a stdio server.
+
+Optional:
+- **An AutoCAD MCP to draw with.** [AutoCAD MCP Pro](https://github.com/U-C4N/Autocad-MCP) (`pip install
+  autocad-mcp-pro`, `AUTOCAD_MCP_BACKEND=ezdxf` with no AutoCAD, `TOOL_PACKS=core,arch`) writes the records route.
+  Any other MCP can draw the layer standard.
+- **A DWG converter, to read and write DWG:**
+  - the free [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter), found under
+    `C:\Program Files\ODA` or through `PLOMADA_ODA`;
+  - or LibreDWG's `dwg2dxf` / `dxf2dwg` on PATH.
+
+## The agent skill
+
+`skill/` is an [agent skill](skill/SKILL.md) that teaches a model to drive Plomada well. It covers:
+- which of the five routes to take;
+- the exact plan format, with millimetres and bulges explained;
+- every tool, with its defaults;
+- every refusal and how to fix it.
+
+Copy the folder into your agent's skills directory, for example `~/.claude/skills/plomada` for Claude Code.
 
 ## Use
 
@@ -248,25 +340,23 @@ Storeys take `elevation` (and `ground_level_mm` for the site and the terrain) on
 `storey` may say `"elevation_mode": "explicit"` with a floor-to-floor `height`. `set_slab` changes one slab record,
 and `add_slab` grows ids, holes, top offsets, bands and curves.
 
-**From a prompt to AutoCAD and back.** AutoCAD MCP Pro's `entity_create_polyline` takes no bulges, so a curved plan is
-best written once as PlanInput JSON: `build_plan` builds it in SketchUp and `write_plan_dxf` writes the same plan as a
-millimetre DXF with real arcs, which `drawing_open` shows in AutoCAD for the documentation sheets and
-`build_from_autocad` reads back to identical records. In that DXF every 0.5 record is an entity with XDATA app
-`PLOMADA` (one JSON object in 1000 strings, like ACADMCP_ARCH): an LWPOLYLINE gives the outline, path or axis with
-its bulges, a CIRCLE a column. Drawn by hand without XDATA, these layers are read with default parameters:
+**From a prompt to AutoCAD and back.** A curved plan is best written once as PlanInput JSON:
+- `build_plan` builds it in SketchUp;
+- `write_plan_dxf` writes the same plan as a millimetre drawing with real arcs, which AutoCAD opens for the
+  documentation sheets. `open=true` opens it there, and `format="dwg"` writes a DWG if a converter is installed;
+- `build_from_autocad` reads it back to identical records.
 
-| Layer | Becomes |
-|---|---|
-| `PLOMADA-LOSA` (closed polyline) | slab |
-| `PLOMADA-BARANDA` | glass railing |
-| `PLOMADA-JARDINERA` (closed) | planter |
-| `PLOMADA-MURO-<thickness mm>` | centred wall |
-| `PLOMADA-MURO-CORTINA` | curtain wall |
-| `PLOMADA-PILETA` (closed) | pool |
-| `PLOMADA-COLUMNA` (circle or closed polyline) | column |
+In that file every record is an entity carrying XDATA app `PLOMADA` (one JSON object in 1000 strings, like
+ACADMCP_ARCH). The documentation layers (`A-WALL`, `A-DOOR`, `A-GLAZ`, `A-AREA-IDEN`, `A-FLOR-STRS`) sit on top.
 
-ACADMCP_ARCH walls and PLOMADA curved walls join on one storey. SPLINE and ELLIPSE entities on these layers are
-flattened at 5 mm.
+Without XDATA, the `PLOMADA-*` layers alone carry a plan, which is how any CAD tool feeds Plomada. The layers cover:
+- walls, doors, windows, rooms, straight stairs and furniture;
+- slabs, railings, planters, curtain walls, pools and columns.
+
+Spanish and English names both work (`PLOMADA-MURO-200` or `PLOMADA-WALL-200`). The full table and an ezdxf example are
+in [docs/drawing-standard.md](docs/drawing-standard.md). With `write_plan_dxf(style="layers")`, Plomada writes a plan
+in that standard and lists what it could not carry: justification, heights, door hand and swing without a payload,
+L and U stairs, and ramps.
 
 ### Drawings
 
@@ -290,9 +380,10 @@ Nothing in the model changes, and it takes about 50 s for the complete house.
 | Kind | Tools |
 |---|---|
 | **Read-only** | `status` · `model_info` · `list_entities` · `list_tags` · `list_materials` · `get_plan` · `capture_view` · `job_status` |
+| **Plans, no SketchUp** | `plan_from_dxf` · `preview_plan` · `write_plan_dxf` |
 | **Build** | `build_from_autocad` · `build_plan` |
 | **Edit** | `add_wall` · `add_opening` · `move_opening` · `set_wall_height` · `add_slab` · `set_slab` · `add_roof` · `add_terrain` · `set_material` |
-| **Scenes and exports** | `auto_scenes` · `create_scene` · `export_scene_images` · `export_drawings` · `export_model` · `write_plan_dxf` |
+| **Scenes and exports** | `auto_scenes` · `create_scene` · `export_scene_images` · `export_drawings` · `export_model` |
 | **Housekeeping** | `reset_plomada` · `undo` · `job_cancel` · `execute_ruby` (off by default) |
 
 Every length is millimetres. Edits and `get_plan` take `storey`; with several storeys in the model and none named they
@@ -303,7 +394,8 @@ annotations, and refusals name the field: `walls[2].thickness must be greater th
 
 ```text
 Claude ──stdio──> plomada-mcp (Python)  ──127.0.0.1:7883, length-prefixed JSON-RPC, token──>  Plomada (Ruby, inside SketchUp)
-                  parses the DXF (ezdxf)                                                     one UI.start_timer pump:
+                  reads DXF / DWG (ezdxf)                                                    one UI.start_timer pump:
+                  infers, writes, previews                                                   
                   validates (pydantic)                                                        accept · read · enqueue ·
                   retries reads, never mutations                                              reads (15 ms) · 1 job step (40 ms) · write
 ```
@@ -333,7 +425,7 @@ source.
 
 | | Transport | Auth | Ruby eval by default | Architecture tools | Needs booleans | Tests |
 |---|---|---|---|---|---|---|
-| **Plomada** | Length-prefixed JSON-RPC on loopback TCP, UI-timer pump, stdio bridge | 64-hex token, constant-time compare, required | Off | Plan in: curved walls, openings (arched too), carpentry, curtain walls, columns, storeys at any level, stairs, slab records with bands, railings, planters, pools, ramps, flat/gable/hip roofs, furniture from a model library, site, terrain, rooms, automatic scenes, 2D drawings, plan to DXF | No | 208 minitest + 76 pytest, live e2e, bench, hotel benchmark |
+| **Plomada** | Length-prefixed JSON-RPC on loopback TCP, UI-timer pump, stdio bridge | 64-hex token, constant-time compare, required | Off | Plan in: curved walls, openings (arched too), carpentry, curtain walls, columns, storeys at any level, stairs, slab records with bands, railings, planters, pools, ramps, flat/gable/hip roofs, furniture from a model library, site, terrain, rooms, automatic scenes, 2D drawings, plan to DXF/DWG; reads any CAD through a layer standard and infers ordinary drawings | No | 208 minitest + 167 pytest, live e2e, bench |
 | [Tarkiin/SketchUp-MCP](https://github.com/Tarkiin/SketchUp-MCP) | HTTP on 127.0.0.1:8080, served by Ruby threads, `Access-Control-Allow-Origin: *` | None | On | Primitives and `create_roof_truss` | No | None |
 | [zinin/sketchup-mcp2](https://github.com/zinin/sketchup-mcp2) | Length-prefixed JSON-RPC on TCP, UI-timer pump, stdio bridge | None (loopback default) | On (`eval_enabled: true`) | Woodworking joints | Yes (`Group#subtract`) | Ruby minitest + Python |
 | [PMajesty/sk_ruby_mcp](https://github.com/PMajesty/sk_ruby_mcp) | Streamable HTTP inside SketchUp, Host/Origin guard, no bridge | Optional, empty by default | On | Massing boxes, façade openings as glued components | No | Ruby test suite + soak scripts |
@@ -354,6 +446,10 @@ source.
   cancel, as in 0.4: square them first.
 - **Roofs.** A gable needs a rectangular footprint. A hip takes any simple outline but no courtyard, and an overhang that
   makes the eave line cross itself is refused.
+- **Inference is a draft.** `plan_from_dxf` reads walls drawn as two parallel lines (or outlines or hatches) 60 to
+  600 mm apart, doors with a swing or a door block, windows as lines or blocks, and room text. Heights, sills and
+  materials are defaults. Walls drawn as a single line, splines approximating curves, stairs, slabs and furniture are
+  not inferred, and an unusual drawing can need a layer mapping. Read the report: [docs/infer.md](docs/infer.md).
 - **The library does not ship with Plomada.** It is your own folder of models (3D Warehouse downloads keep their own
   terms); without it, or for a block it does not map, furniture is a few massing boxes. Blocks outside the AutoCAD MCP
   Pro catalogue are skipped with a warning. Loading a library model blocks SketchUp for up to 3 s per model, the first
@@ -371,10 +467,11 @@ source.
 ## Development
 
 ```powershell
-uv run pytest                     # bridge: DXF, models, errors, socket, MCP tools (76 tests)
+uv run pytest                     # bridge: DXF, layers, inference, writer, models, socket, MCP tools (167 tests)
 ruby -Itest test/run_all.rb       # extension: geometry, plan, pump (208 tests, Ruby 3.2, no SketchUp)
 uv run ruff check . ; uv run ruff format --check .
 uv run python scripts/e2e_house.py        # live: needs SketchUp with the extension
+uv run python scripts/e2e_acadpro_ezdxf.py  # route A without AutoCAD: AutoCAD MCP Pro's ezdxf backend to read_plan
 uv run python scripts/bench.py --certify  # live: writes bench/results-<date>.json
 uv run python scripts/build_rbz.py        # dist/plomada-<version>.rbz
 uv run python scripts/check_compat.py some.skp   # is this file newer than the installed SketchUp?
@@ -396,13 +493,14 @@ one place per side. Release notes are in [CHANGELOG.md](CHANGELOG.md).
 ```text
 extension/plomada.rb        loader (registers the extension)
 extension/plomada/          the extension: pump, protocol, geometry/ (pure Ruby), su/ (SketchUp side)
-src/plomada_bridge/         the stdio MCP server: tools, socket client, DXF reader, pydantic models
+src/plomada_bridge/         the stdio MCP server: tools, socket client, DXF/DWG reader, inference, writer, preview, models
+skill/                      the agent skill: SKILL.md and its references
 test/                       minitest suite with FakeSocket, FakeModel, FakeEntities, FakeView
 tests/                      pytest suite and fixtures (the reference house, the four test buildings, the two-storey house, the complete house with its site)
 scripts/                    install.ps1, e2e_house.py, e2e_curvas.py, bench.py, build_rbz.py, check_compat.py,
                             sketchup-dev.cmd and the dev-instance helpers
 bench/                      measured results
-docs/img/                   images from the e2e run
+docs/                       drawing standard, inference, record contract, images
 ```
 
 ## License
