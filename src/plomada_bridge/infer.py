@@ -2505,11 +2505,15 @@ class _Inferrer:
     def summarise(self, plan: Plan, chains: list, runs: list[_Run], j: _Junctions) -> None:
         rep = self.report
         kept = {o.id for o in plan.openings}
-        rep["openings"] = [
-            {"id": e["_rec"]["id"], "wall": e["_rec"]["wall"], **{k: v for k, v in e.items() if k != "_rec"}}
-            for e in rep["openings"]
-            if e["_rec"]["id"] in kept
-        ]
+        order = {o.id: k for k, o in enumerate(plan.openings)}
+        rep["openings"] = sorted(
+            (
+                {"id": e["_rec"]["id"], "wall": e["_rec"]["wall"], **{k: v for k, v in e.items() if k != "_rec"}}
+                for e in rep["openings"]
+                if e["_rec"]["id"] in kept
+            ),
+            key=lambda e: order[e["id"]],
+        )
         for e in rep["unclassified_gaps"]:
             rec = e.pop("_rec", None)
             if rec is not None and rec["id"] in kept:
