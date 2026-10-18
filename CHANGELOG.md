@@ -57,6 +57,11 @@ plan with `plan_from_dxf`.
 ### Fixed
 
 - `write_plan` drew both faces of a centred arc wall at r - t/2; the outer face is at r + t/2.
+- An LWPOLYLINE or 2D POLYLINE under a downward extrusion (a mirrored or exploded block) was read in its OCS, x
+  mirrored and its bulges turned the wrong way; so were the SITIO and catalogue inserts. They are read in world
+  coordinates now, and such a furniture insert is skipped as mirrored. 0.5 records and 0.4 site polylines had it too.
+- A damaged DXF that ezdxf rejects with ValueError, StopIteration and the like (not only DXFStructureError) is
+  refused as "cannot read ... as DXF" instead of escaping as a raw error; 0.5 had it too.
 
 ## [0.5.0] - 2026-10-17
 
