@@ -12,13 +12,15 @@ from pathlib import Path
 
 import ezdxf
 import pytest
+from mcp.client import Client
 
 import plans_infer as plans
-from conftest import FIXTURES
+from conftest import FIXTURES, FakeExtension, make_config
 from drafter import Drafter, Seg, Style, draft
 from plomada_bridge.dxf import read_plan
 from plomada_bridge.infer import InferError, InferOptions, LayerRoles, infer_plan
 from plomada_bridge.models import Plan, parse_plan
+from plomada_bridge.server import Bridge, create_server
 
 ROOT = Path(__file__).resolve().parents[1]
 RUBY = shutil.which("ruby")
@@ -435,3 +437,49 @@ def test_refusals_name_the_problem(tmp_path):
     doc.saveas(tmp_path / "text.dxf")
     with pytest.raises(InferError, match="no layer is named or mapped as walls"):
         infer_plan(tmp_path / "text.dxf")
+
+
+# --- the MCP tool --------------------------------------------------------------------------------
+
+
+def test_the_tool_works_with_sketchup_closed_and_feeds_build_plan(run, tmp_path):
+    async def offline():
+        bridge = Bridge(make_config(tmp_path, 9))  # nothing listens on port 9
+        async with Client(create_server(bridge)) as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            inferred = await client.call_tool("plan_from_dxf", {"path": str(FIXTURES / "casa_minimalista.dxf")})
+            dwg = await client.call_tool("plan_from_dxf", {"path": str(tmp_path / "plano.dwg")})
+            bad = await client.call_tool(
+                "plan_from_dxf",
+                {"path": str(FIXTURES / "casa_minimalista.dxf"), "thickness_min": 300, "thickness_max": 200},
+            )
+            return tools["plan_from_dxf"], inferred, dwg, bad
+
+    tool, inferred, dwg, bad = run(offline())
+    assert tool.annotations.read_only_hint is True and tool.annotations.destructive_hint is False
+    assert "build_plan" in tool.description and "never build a plan" in tool.description
+    assert not inferred.is_error
+    out = inferred.structured_content
+    assert set(out) == {"plan", "report"} and out["report"]["verdict"].startswith("draft: 4 walls, 4 doors, 7 windows")
+    assert dwg.is_error and dwg.content[0].text.startswith(
+        "plan_from_dxf refused its input (-32004): plano.dwg is a DWG"
+    )
+    assert bad.is_error and "thickness_min 300 must be below thickness_max 200" in bad.content[0].text
+
+    fake = FakeExtension(handlers={"build_plan": lambda p: {"walls": len(p["plan"]["walls"]), "warnings": []}})
+
+    async def build():
+        await fake.start()
+        bridge = Bridge(make_config(tmp_path, fake.port))
+        try:
+            async with Client(create_server(bridge)) as client:
+                return await client.call_tool("build_plan", {"plan": out["plan"]})
+        finally:
+            await bridge.client.close()
+            await fake.stop()
+
+    built = run(build())
+    assert not built.is_error, built.content
+    sent = next(p for m, p in fake.seen if m == "build_plan")["plan"]
+    assert (len(sent["walls"]), len(sent["openings"]), len(sent["rooms"])) == (4, 11, 4)
+    assert sent["walls"] == out["plan"]["walls"]
