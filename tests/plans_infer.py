@@ -151,3 +151,25 @@ def corners() -> Plan:
             "rooms": [_room("R1", "ESTAR", (2500, 3500))],
         }
     )
+
+
+def mixed() -> Plan:
+    """A 250 mm front wall meeting a 150 mm U of the other three sides end to end at both corners, and a
+    partition crossing the room in an X with another."""
+    return parse_plan(
+        {
+            "walls": [
+                _wall("F", [[0, 0], [8000, 0]], 250),
+                _wall("U", [[8000, 0], [8000, 6000], [0, 6000], [0, 0]], 150),
+                _wall("X1", [[0, 3000], [8000, 3000]], 100),
+                _wall("X2", [[4000, 0], [4000, 6000]], 100),
+            ],
+            "openings": [
+                _op("D1", "F", "door", 1000, 1000),
+                _op("V1", "U", "window", 1500, 1200),
+                _op("D2", "X1", "door", 1000, 800, "out", "right"),
+                _op("D3", "X2", "door", 4000, 800),
+            ],
+            "rooms": [_room("R1", "COCINA", (2000, 1500)), _room("R2", "PATIO", (6000, 4500))],
+        }
+    )

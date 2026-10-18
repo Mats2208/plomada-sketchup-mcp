@@ -187,6 +187,14 @@ def test_a_curved_wall_from_concentric_arcs(tmp_path):
     assert sorted((o.offset, o.width) for o in windows) == [(1500.0, 1500.0), (7500.0, 1500.0)]
 
 
+def test_walls_of_two_thicknesses_end_to_end_and_an_x_crossing(tmp_path):
+    gt = plans.mixed()
+    res = infer_plan(draft(gt, tmp_path / "mixed.dxf"))
+    _assert_same(gt, res.plan)
+    _assert_rooms(gt, res.plan)
+    assert not any(w.closed for w in res.plan.walls)  # 250 and 150 cannot chain: two walls, two mitres
+
+
 def test_a_drawing_in_metres_reads_as_millimetres(tmp_path):
     gt = plans.house()
     res = infer_plan(draft(gt, tmp_path / "m.dxf", scale=0.001, insunits=6))
@@ -354,7 +362,7 @@ def test_the_same_drawing_gives_the_same_plan(tmp_path):
 
 
 @needs_ruby
-@pytest.mark.parametrize("name", ["house", "l_house", "curved", "box"])
+@pytest.mark.parametrize("name", ["house", "l_house", "curved", "box", "mixed"])
 def test_the_wall_solver_accepts_every_inferred_plan(tmp_path, name):
     style = {"faces": "outlines"} if name == "box" else {}
     res = infer_plan(draft(getattr(plans, name)(), tmp_path / f"{name}.dxf", **style))

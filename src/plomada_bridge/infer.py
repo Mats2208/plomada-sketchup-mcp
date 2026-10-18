@@ -71,7 +71,7 @@ import ezdxf
 from ezdxf.document import Drawing
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .models import Opening, Plan, Room, Wall, describe_error, parse_plan, ring_area
+from .models import Opening, Plan, Room, Wall, describe_error, parse_plan, polyline_length, ring_area
 
 Vec = tuple[float, float]
 
@@ -970,6 +970,7 @@ class _Gap:
     evidence: str = ""
     assumed: list[str] = field(default_factory=list)
     emitted: bool = True
+    entry: dict[str, Any] | None = None  # its line in the report's unclassified_gaps
 
 
 @dataclass(eq=False)
@@ -1295,12 +1296,15 @@ class _Junctions:
         self.nodes: dict[int, list[tuple[_Run, int]]] = {}
         self.node_of: dict[tuple[int, int], int] = {}
         self.stems: list[tuple[_Run, int, _Run]] = []
+        self.serial = 0
 
     def _node(self, members: list[tuple[_Run, int]]) -> None:
         ids = {self.node_of[(id(r), e)] for r, e in members if (id(r), e) in self.node_of}
-        key = min(ids) if ids else len(self.nodes) + 1000 * len(self.runs)
-        while key in self.nodes and not ids:
-            key += 1
+        if ids:
+            key = min(ids)
+        else:
+            self.serial += 1
+            key = self.serial
         group = self.nodes.setdefault(key, [])
         for other in ids - {key}:
             for m in self.nodes.pop(other):
@@ -1709,7 +1713,7 @@ class _Inferrer:
             gap.kind = policy
             gap.assumed.append(f"nothing drawn in the gap; emitted as a {policy} (default_opening)")
         gap.emitted = policy != "skip"
-        gap.entry = entry  # type: ignore[attr-defined]
+        gap.entry = entry
 
     def windows_in_walls(self, runs: list[_Run]) -> None:
         """Window linework or blocks drawn inside a continuous wall (faces unbroken) are windows, and so are
@@ -2201,9 +2205,9 @@ class _Inferrer:
                 "_rec": rec,
             }
         )
-        if hasattr(g, "entry"):
-            g.entry["wall"] = wall_id  # type: ignore[attr-defined]
-            g.entry["_rec"] = rec  # type: ignore[attr-defined]
+        if g.entry is not None:
+            g.entry["wall"] = wall_id
+            g.entry["_rec"] = rec
         return rec
 
     # 8. rooms
@@ -2304,8 +2308,8 @@ class _Inferrer:
             ],
         }
 
-    def finish(self, dwg: _Drawing, walls: list[dict], openings: list[dict], rooms: list[dict]) -> Plan:
-        raw: dict[str, Any] = {"walls": walls, "openings": openings, "rooms": rooms}
+    def finish(self, walls: list[dict], openings: list[dict], rooms: list[dict]) -> Plan:
+        """The plan, every record checked on its own first: one that fails is dropped and reported."""
         kept_walls = []
         for w in walls:
             try:
@@ -2325,6 +2329,10 @@ class _Inferrer:
                 continue
             if op["wall"] in ids:
                 kept_open.append(op)
+            else:
+                self.report["dropped"].append(
+                    {"what": "opening", "id": op["id"], "reason": f"its wall {op['wall']} was dropped"}
+                )
         kept_rooms = []
         for r in rooms:
             try:
@@ -2387,7 +2395,7 @@ class _Inferrer:
         chains = self.resolve(runs, j)
         walls, openings = self.walls(chains)
         rooms = self.rooms(dwg, walls)
-        plan = self.finish(dwg, walls, openings, rooms)
+        plan = self.finish(walls, openings, rooms)
         self.unpaired()
         self.summarise(plan, chains, runs, j)
         return InferResult(plan, self.report)
@@ -2395,8 +2403,6 @@ class _Inferrer:
     def summarise(self, plan: Plan, chains: list, runs: list[_Run], j: _Junctions) -> None:
         rep = self.report
         kept = {o.id for o in plan.openings}
-        final = {id(o): o for o in plan.openings}
-        del final
         rep["openings"] = [
             {"id": e["_rec"]["id"], "wall": e["_rec"]["wall"], **{k: v for k, v in e.items() if k != "_rec"}}
             for e in rep["openings"]
@@ -2429,12 +2435,7 @@ class _Inferrer:
                     "thickness": w.thickness,
                     "closed": w.closed,
                     "vertices": len(w.axis),
-                    "length_mm": _r(
-                        sum(
-                            math.dist(w.axis[i][:2], w.axis[(i + 1) % len(w.axis)][:2])
-                            for i in range(len(w.axis) if w.closed else len(w.axis) - 1)
-                        )
-                    ),
+                    "length_mm": _r(polyline_length(w.axis, w.closed)),
                     "paired_pct": _r(100.0 * min(1.0, paired / total)) if total > 1.0 else 100.0,
                 }
             )
@@ -2452,7 +2453,7 @@ class _Inferrer:
         doors = sum(op.opening_kind == "door" for op in plan.openings)
         windows = len(plan.openings) - doors
         rep["counts"] = {
-            "lines": len(self.faces),
+            "faces": len(self.faces),
             "pieces": len(self.pieces),
             "runs": len(runs),
             "walls": len(plan.walls),
