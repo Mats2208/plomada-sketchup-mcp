@@ -34,6 +34,7 @@ SLAB_TOP_OFFSET_MAX_MM = 2_000.0  # largest step of a slab top off the storey fl
 RAMP_MAX_SLOPE = 0.20  # rise over run
 DOOR_HEIGHT_MM = 2100.0  # the extension's height for a door whose record has none
 WINDOW_HEIGHT_MM = 1200.0  # the extension's height for a window whose record has none
+WINDOW_SILL_MM = 900.0  # the extension's sill for a window whose record has none (window_default_sill_mm)
 
 Mm = Annotated[float, Field(allow_inf_nan=False)]
 Positive = Annotated[float, Field(gt=0, le=MAX_MM, description="mm")]
