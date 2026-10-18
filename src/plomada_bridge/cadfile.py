@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from .dxf import DxfPlanError
 
@@ -39,8 +39,9 @@ HELP = (
 
 
 def _version(exe: str) -> tuple[int, ...]:
-    """The version numbers in an install folder's name: "ODAFileConverter 25.12.0" is (25, 12, 0)."""
-    return tuple(int(n) for n in re.findall(r"\d+", Path(exe).parent.name))
+    """The version numbers in an install folder's name: "ODAFileConverter 25.12.0" is (25, 12, 0). The path is a
+    Windows one wherever this runs, so it is split on backslashes on every platform."""
+    return tuple(int(n) for n in re.findall(r"\d+", PureWindowsPath(exe).parent.name))
 
 
 def find_oda() -> Path | None:
