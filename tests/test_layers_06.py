@@ -454,19 +454,52 @@ def test_inches_must_be_confirmed_and_units_overrides_everything(tmp_path):
         read_plan(path, units="yd")
 
 
-def test_records_are_millimetres_whatever_insunits_says_unless_units_is_given():
-    path = FIXTURES / "casa_completa_N00.dxf"  # AutoCAD MCP Pro wrote $INSUNITS 6 over millimetre records
+def _units_warning(unit: str) -> str:
+    return (
+        f'units="{unit}" applied only to the entities on PLOMADA-* layers without XDATA: the ACADMCP_ARCH and '
+        "PLOMADA records, and the ARCH_ and SITIO_ blocks and SITIO-* polylines drawn with them, are millimetres"
+    )
+
+
+@pytest.mark.parametrize("name", ["casa_completa_N00", "casa_2_plantas_N00"])
+def test_records_are_millimetres_whatever_insunits_or_units_say(name):
+    path = FIXTURES / f"{name}.dxf"  # AutoCAD MCP Pro wrote $INSUNITS 6 or 1 over millimetre records
     auto = read_plan(path)
+    code = ezdxf.readfile(path).header["$INSUNITS"]
     assert auto.units == "mm"
-    assert auto.units_note == "$INSUNITS 6 ignored: ACADMCP_ARCH and PLOMADA records are millimetres"
-    cm = read_plan(path, units="cm")
-    a, b = auto.plan.to_wire(), cm.plan.to_wire()
-    assert b["walls"][0]["axis"][1] == [10 * v for v in a["walls"][0]["axis"][1]]
-    assert b["walls"][0]["thickness"] == 10 * a["walls"][0]["thickness"]
-    assert b["openings"][0]["offset"] == 10 * a["openings"][0]["offset"]
-    assert b["rooms"][0]["area"] == pytest.approx(100 * a["rooms"][0]["area"])
-    assert b["furniture"][0]["at"] == [10 * v for v in a["furniture"][0]["at"]]
-    assert b["site"]["objects"][0]["at"] == [10 * v for v in a["site"]["objects"][0]["at"]]
+    assert auto.units_note == f"$INSUNITS {code} ignored: ACADMCP_ARCH and PLOMADA records are millimetres"
+    for unit in ("cm", "m", "in"):
+        given = read_plan(path, units=unit)
+        assert given.plan.to_wire() == auto.plan.to_wire()
+        assert given.units == unit and given.warnings == [*auto.warnings, _units_warning(unit)]
+    assert read_plan(path, units="mm").warnings == auto.warnings
+
+
+def test_units_scale_the_layer_standard_beside_records(tmp_path):
+    doc, msp = _doc(units.CM)
+    record = msp.add_lwpolyline([(0, 0), (6000, 0)], dxfattribs={"layer": "PLOMADA-MURO-200"})
+    _tag(record, {"kind": "wall", "id": "W1", "thickness": 200})  # a record: mm, whatever the unit
+    door = msp.add_line((1000, 0), (1900, 0), dxfattribs={"layer": "PLOMADA-PUERTA"})
+    _tag(door, {"kind": "opening", "id": "D1"})
+    msp.add_line((0, 1000), (600, 1000), dxfattribs={"layer": "PLOMADA-MURO-150"})  # bare: centimetres
+    msp.add_line((100, 1000), (190, 1000), dxfattribs={"layer": "PLOMADA-PUERTA"})
+    doc.blocks.new("SITIO_ARBOL").add_circle((0, 0), 500)
+    msp.add_blockref("SITIO_ARBOL", (3000, 5000))  # drawn with the records: mm
+    doc.blocks.new("SOFA").add_line((0, 0), (100, 0))
+    msp.add_blockref("SOFA", (300, 500), dxfattribs={"layer": "PLOMADA-MUEBLE"})  # bare furniture: cm
+    parsed = read_plan(_save(doc, tmp_path), units="cm")
+    wire = parsed.plan.to_wire()
+    assert [(w["id"], w["axis"]) for w in wire["walls"]] == [
+        ("W1", [[0.0, 0.0], [6000.0, 0.0]]),
+        (wire["walls"][1]["id"], [[0.0, 10000.0], [6000.0, 10000.0]]),
+    ]
+    assert [(o["id"], o["wall"], o["offset"], o["width"]) for o in wire["openings"]] == [
+        ("D1", "W1", 1000.0, 900.0),
+        (wire["openings"][1]["id"], wire["walls"][1]["id"], 1000.0, 900.0),
+    ]
+    assert [o["at"] for o in wire["site"]["objects"]] == [[3000.0, 5000.0]]
+    assert [f["at"] for f in wire["furniture"]] == [[3000.0, 5000.0]]
+    assert parsed.warnings == [_units_warning("cm")]
 
 
 # --- DWG ------------------------------------------------------------------------------------

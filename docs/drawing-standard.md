@@ -30,7 +30,10 @@ millimetres** (`PLOMADA-MURO-200` is a 200 mm wall in a drawing in metres too), 
 
 `build_from_autocad(units=...)` (`"auto"`, `"mm"`, `"cm"`, `"m"`, `"in"`, `"ft"`) overrides all of this. A drawing
 that carries `ACADMCP_ARCH` or `PLOMADA` records is millimetres in `auto`: the records are, whatever the header says.
-Draw in millimetres with `$INSUNITS` 4 and none of this matters.
+**Records are always millimetres**, `units` included: an entity carrying a record (its XDATA, its geometry, the holes a
+slab names) is never scaled. In a drawing with records, `units` scales only the entities on `PLOMADA-*` layers without
+XDATA, and the `ARCH_` and `SITIO_` blocks and `SITIO-*` polylines drawn with the records stay millimetres too; the
+result carries a warning saying so. Draw in millimetres with `$INSUNITS` 4 and none of this matters.
 
 ## The layers
 

@@ -52,7 +52,8 @@ A drawing reaches a plan by three routes, all exact (nothing is inferred):
      the midpoint of the bottom riser up the run (read_stair);
    - furniture: INSERTs of any block on PLOMADA-MUEBLE / -FURNITURE (furniture).
 
-Coordinates are scaled to millimetres by the drawing unit (read_units). An
+Coordinates are read in WCS and scaled to millimetres by the drawing unit
+(read_units), except that records are always millimetres (_entity_scale). An
 entity on a PLOMADA-* layer the standard does not know, or of a type its layer
 does not take, is skipped with a warning naming it.
 """
@@ -160,17 +161,6 @@ Units = Literal["auto", "mm", "cm", "m", "in", "ft"]
 UNIT_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "ft": 304.8}
 INSUNITS = {0: "mm", 4: "mm", 5: "cm", 6: "m", 1: "in", 2: "ft"}  # $INSUNITS codes Plomada reads
 UNIT_NAMES = {"mm": "millimetres", "cm": "centimetres", "m": "metres", "in": "inches", "ft": "feet"}
-# Scaled lengths of a record or payload: every numeric field named here (a curtain wall's head is one,
-# an opening's head is a string), the vertex lists, the points and the area.
-LENGTH_FIELDS = frozenset(
-    {
-        "thickness", "height", "offset", "width", "sill", "arch_rise", "panel_width", "riser_height", "going",
-        "top_offset", "inset", "curb_thickness", "soil_level", "diameter", "head", "mullion_spacing", "glass",
-        "depth", "coping", "z_start", "z_end", "wall_height", "elevation",
-    }
-)  # fmt: skip
-VERTEX_FIELDS = ("axis", "outline", "path", "points")
-POINT_FIELDS = ("at", "start")
 
 
 class DxfPlanError(ValueError):
@@ -223,8 +213,9 @@ def _params(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k not in ("v", "kind")}
 
 
-def _annotation(entity: Any, kind: str, scale: float = 1.0) -> dict[str, Any]:
-    """The fields a PLOMADA payload of this kind adds to a record read from the entity ({} without one)."""
+def _annotation(entity: Any, kind: str) -> dict[str, Any]:
+    """The fields a PLOMADA payload of this kind adds to a record read from the entity ({} without one), in
+    mm as every record is."""
     payload = _plomada(entity)
     if payload is None:
         return {}
@@ -233,7 +224,7 @@ def _annotation(entity: Any, kind: str, scale: float = 1.0) -> dict[str, Any]:
             f"{PLOMADA_APP} record on entity {entity.dxf.handle} has kind {payload['kind']!r}; "
             f"a {entity.dxftype()} there carries {kind}"
         )
-    return scale_record(_params(payload), scale)
+    return _params(payload)
 
 
 def records(doc: Drawing) -> list[dict[str, Any]]:
@@ -267,34 +258,21 @@ def _scale_vertices(vertices: Any, k: float) -> Any:
     ]  # fmt: skip
 
 
-def scale_record(rec: dict[str, Any], k: float) -> dict[str, Any]:
-    """The record or payload with its lengths multiplied by k (drawing unit to mm): LENGTH_FIELDS, vertex
-    lists, hole rings, points, transoms, profile, edge band and plant spacing; the area by k squared.
-    Anything malformed is left for validation to name."""
-    if k == 1.0:
-        return rec
-    out: dict[str, Any] = {}
-    for key, v in rec.items():
-        if key in LENGTH_FIELDS and _num(v):
-            v = v * k
-        elif key in VERTEX_FIELDS:
-            v = _scale_vertices(v, k)
-        elif key == "holes" and isinstance(v, list):
-            v = [_scale_vertices(ring, k) if isinstance(ring, list) else ring for ring in v]
-        elif key in POINT_FIELDS and isinstance(v, (list, tuple)) and len(v) == 2 and all(map(_num, v)):
-            v = [v[0] * k, v[1] * k]
-        elif key == "area" and _num(v):
-            v = v * k * k
-        elif key in ("transoms", "profile") and isinstance(v, list):
-            v = [x * k if _num(x) else x for x in v]
-        elif key in ("edge_band", "plants") and isinstance(v, dict):
-            v = {f: x * k if f in ("height", "depth", "spacing") and _num(x) else x for f, x in v.items()}
-        out[key] = v
-    return out
+def _entity_scale(entity: Any, scale: float, with_records: bool) -> float:
+    """mm per drawing unit for one entity: 1 for an entity that carries an ACADMCP_ARCH or PLOMADA record
+    (records are millimetres whatever the drawing unit) and, in a drawing with records, for one off the
+    PLOMADA-* layers (the ARCH_ and SITIO_ blocks and SITIO-* polylines AutoCAD MCP Pro and write_plan_dxf
+    draw with the records); scale for the rest, the bare layer standard."""
+    if _has(entity, APP_ID) or _has(entity, PLOMADA_APP):
+        return 1.0
+    if with_records and not entity.dxf.layer.upper().startswith("PLOMADA-"):
+        return 1.0
+    return scale
 
 
 def read_units(doc: Drawing, units: str, has_records: bool, name: str) -> tuple[str, float, str | None]:
-    """(unit, mm per drawing unit, note) for a drawing. units other than auto is taken as given. auto:
+    """(unit, mm per drawing unit, note) for a drawing. units other than auto is taken as given, for the
+    entities it applies to (_entity_scale: never a record). auto:
     a drawing with ACADMCP_ARCH or PLOMADA records is millimetres, the records' contract (AutoCAD MCP Pro
     leaves $INSUNITS at its template's inches or metres over millimetre records); otherwise $INSUNITS
     0 (unitless) and 4 are mm, 5 cm and 6 m. Inches and feet (1, 2) must be confirmed with units: AutoCAD's
@@ -572,7 +550,8 @@ def plomada_records(
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any] | None, list[str]]:
     """The 0.5 records of model space by plan list (PLOMADA records and the geometry layers of the
     standard, in drawing order, then the chained LINE and ARC walls, railings and curtain walls); the
-    storey payload (or None); warnings for the entities skipped."""
+    storey payload (or None); warnings for the entities skipped. scale (mm per drawing unit) applies to the
+    layer standard only: a PLOMADA record, its geometry and its holes are millimetres."""
     out: dict[str, list[dict[str, Any]]] = {key: [] for key, _ in GEOMETRY_KINDS.values()}
     storey: dict[str, Any] | None = None
     warnings: list[str] = []
@@ -589,10 +568,9 @@ def plomada_records(
             if kind == "storey":
                 if storey is not None:
                     raise DxfPlanError(f"two {PLOMADA_APP} storey records; a DXF holds one storey")
-                storey = scale_record(_params(payload), scale)
+                storey = _params(payload)
             elif kind in GEOMETRY_KINDS:
-                params = scale_record(_params(payload), scale)
-                out[GEOMETRY_KINDS[kind][0]].append(_geometry_record(doc, entity, kind, params, scale))
+                out[GEOMETRY_KINDS[kind][0]].append(_geometry_record(doc, entity, kind, _params(payload), 1.0))
             continue
         if _has(entity, APP_ID):
             continue
@@ -705,7 +683,7 @@ def read_opening(entity: Any, kind: str, params: dict[str, Any], walls: list[Wal
         "sill": params["sill"],
         "height": params["height"],
     }
-    return {**rec, **_annotation(entity, "opening", scale)}
+    return {**rec, **_annotation(entity, "opening")}
 
 
 def _text_point(entity: Any) -> list[float]:
@@ -745,7 +723,7 @@ def read_room(entity: Any, scale: float) -> dict[str, Any] | None:
         "at": [x * scale, y * scale],
         "area": area,
     }
-    return {**rec, **_annotation(entity, "room", scale)}
+    return {**rec, **_annotation(entity, "room")}
 
 
 def read_stair(entity: Any, params: dict[str, Any], floor_to_floor: float, scale: float) -> dict[str, Any]:
@@ -771,7 +749,7 @@ def read_stair(entity: Any, params: dict[str, Any], floor_to_floor: float, scale
         "stair_kind": "straight",
         "turn": "left",
     }
-    return {**rec, **_annotation(entity, "stair", scale)}
+    return {**rec, **_annotation(entity, "stair")}
 
 
 def _host_walls(walls: list[dict[str, Any]], name: str) -> list[Wall]:
@@ -797,14 +775,14 @@ def floor_to_floor(storey: dict[str, Any] | None, slabs: list[dict[str, Any]]) -
 # --- furniture and site -----------------------------------------------------------------
 
 
-def furniture(doc: Drawing, scale: float = 1.0) -> tuple[list[dict[str, Any]], list[str]]:
+def furniture(doc: Drawing, scale: float = 1.0, with_records: bool = False) -> tuple[list[dict[str, Any]], list[str]]:
     """The furniture inserts of model space as records: AutoCAD MCP Pro catalogue blocks (ARCH_<NAME>, on
     any layer) and inserts of any block on PLOMADA-MUEBLE / PLOMADA-FURNITURE. The item comes from the
     block's ITEM attribute, else its name lowercased without the ARCH_ prefix; at is the insert point,
     which stands for the piece's back-left corner (the block origin, as arch_catalogue_insert places it),
     and rotation is degrees CCW about it. A PLOMADA furniture payload on the insert supplies the id and
     item. A scaled or mirrored insert (a negative scale, or an extrusion pointing down) is skipped with a
-    warning."""
+    warning. scale applies as _entity_scale says."""
     out: list[dict[str, Any]] = []
     warnings: list[str] = []
     for ins in doc.modelspace().query("INSERT"):
@@ -822,15 +800,16 @@ def furniture(doc: Drawing, scale: float = 1.0) -> tuple[list[dict[str, Any]], l
             warnings.append(f"furniture {ins.dxf.handle} ({name}) skipped: mirrored (its extrusion points down)")
             continue
         at, rotation = _placed(ins)
+        k = _entity_scale(ins, scale, with_records)
         out.append(
             {
                 "v": 1,
                 "kind": "furniture",
                 "id": ins.dxf.handle,
                 "item": item.strip().lower(),
-                "at": [at[0] * scale, at[1] * scale],
+                "at": [at[0] * k, at[1] * k],
                 "rotation": rotation,
-                **_annotation(ins, "furniture", scale),
+                **_annotation(ins, "furniture"),
             }
         )
     for entity, kind, _ in _standard_entities(doc, ("furniture",)):
@@ -839,34 +818,36 @@ def furniture(doc: Drawing, scale: float = 1.0) -> tuple[list[dict[str, Any]], l
     return out, warnings
 
 
-def site(doc: Drawing, scale: float = 1.0) -> dict[str, list[dict[str, Any]]]:
+def site(doc: Drawing, scale: float = 1.0, with_records: bool = False) -> dict[str, list[dict[str, Any]]]:
     """The site: SITIO_<NAME> inserts (a library component centred on the insert point) and
     the lightweight polylines, bulges included, on the SITIO-PAVIMENTO, -DECK, -PILETA (closed)
-    and -CERCO layers. A PLOMADA site payload supplies the id, item, depth or height."""
+    and -CERCO layers. A PLOMADA site payload supplies the id, item, depth or height. scale applies as
+    _entity_scale says."""
     out: dict[str, list[dict[str, Any]]] = {"objects": [], "paving": [], "decks": [], "pools": [], "fences": []}
     msp = doc.modelspace()
     for ins in msp.query("INSERT"):
         name = ins.dxf.name
         if name.upper().startswith(SITE_PREFIX):
             at, rotation = _placed(ins)
+            k = _entity_scale(ins, scale, with_records)
             out["objects"].append(
                 {
                     "id": ins.dxf.handle,
                     "item": name[len(SITE_PREFIX) :].upper(),
-                    "at": [at[0] * scale, at[1] * scale],
+                    "at": [at[0] * k, at[1] * k],
                     "rotation": rotation,
-                    **_annotation(ins, "site", scale),
+                    **_annotation(ins, "site"),
                 }
             )
     for pl in msp.query("LWPOLYLINE"):
         key = SITE_LAYERS.get(pl.dxf.layer.upper())
         if key is None:
             continue
-        pts, closed = vertices(pl, scale)
+        pts, closed = vertices(pl, _entity_scale(pl, scale, with_records))
         rec: dict[str, Any] = {"id": pl.dxf.handle, "points": pts}
         if key == "fences":
             rec["closed"] = closed
-        out[key].append({**rec, **_annotation(pl, "site", scale)})
+        out[key].append({**rec, **_annotation(pl, "site")})
     return out
 
 
@@ -887,12 +868,15 @@ def _load(p: Path) -> Drawing:
             shutil.rmtree(src.parent, ignore_errors=True)
 
 
-def _read(doc: Drawing, name: str, scale: float, storey_height: float | None) -> tuple[dict[str, Any], int, list[str]]:
-    """The raw plan of the drawing in mm, the number of records read and the warnings."""
-    recs = [scale_record(r, scale) for r in records(doc)]
+def _read(
+    doc: Drawing, name: str, scale: float, storey_height: float | None, with_records: bool
+) -> tuple[dict[str, Any], int, list[str]]:
+    """The raw plan of the drawing in mm, the number of records read and the warnings. scale (mm per
+    drawing unit) applies entity by entity (_entity_scale): records are millimetres."""
+    recs = records(doc)
     extra, storey, warnings = plomada_records(doc, scale)
     found = sum(len(v) for v in extra.values())
-    pieces, furniture_warnings = furniture(doc, scale)
+    pieces, furniture_warnings = furniture(doc, scale, with_records)
     walls = [r for r in recs if r["kind"] == "wall"] + extra.pop("walls")
     raw: dict[str, Any] = {
         "walls": walls,
@@ -900,7 +884,7 @@ def _read(doc: Drawing, name: str, scale: float, storey_height: float | None) ->
         "rooms": [r for r in recs if r["kind"] == "room"],
         "stairs": [r for r in recs if r["kind"] == "stair"],
         "furniture": pieces,
-        "site": site(doc, scale),
+        "site": site(doc, scale, with_records),
         **extra,
     }
     if storey is not None:
@@ -917,18 +901,19 @@ def _read(doc: Drawing, name: str, scale: float, storey_height: float | None) ->
         if skip := _takes(entity, kind):
             warnings.append(skip)
             continue
+        k = _entity_scale(entity, scale, with_records)
         if kind == "room":
-            room = read_room(entity, scale)
+            room = read_room(entity, k)
             if room is None:
                 warnings.append(f"{entity.dxftype()} {entity.dxf.handle} on {entity.dxf.layer} skipped: no room name")
                 continue
             raw["rooms"].append(room)
         elif kind == "stair":
-            raw["stairs"].append(read_stair(entity, params, rise, scale))
+            raw["stairs"].append(read_stair(entity, params, rise, k))
         else:
             if hosts is None:
                 hosts = _host_walls(walls, name)
-            raw["openings"].append(read_opening(entity, kind, params, hosts, scale))
+            raw["openings"].append(read_opening(entity, kind, params, hosts, k))
         layered += 1
     return raw, len(recs) + found + layered, furniture_warnings + warnings
 
@@ -958,7 +943,13 @@ def read_plan(path: str | Path, storey_height: float | None = None, units: Units
             f"{fmt(round(span / 1000.0, 1))} m; read as millimetres (pass units to force a unit)"
         )
         unit, scale = "mm", 1.0
-    raw, count, warnings = _read(doc, p.name, scale, storey_height)
+    raw, count, warnings = _read(doc, p.name, scale, storey_height, acad or plomada)
+    if (acad or plomada) and scale != 1.0:
+        warnings.append(
+            f'units="{unit}" applied only to the entities on PLOMADA-* layers without XDATA: the {APP_ID} and '
+            f"{PLOMADA_APP} records, and the {BLOCK_PREFIX} and {SITE_PREFIX} blocks and SITIO-* polylines drawn "
+            "with them, are millimetres"
+        )
     try:
         plan = parse_plan(raw)
     except ValueError as exc:
