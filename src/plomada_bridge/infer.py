@@ -1574,14 +1574,14 @@ class _Inferrer:
             return k
         walls = [ln for ln in dwg.lines if ln.role == "wall"]
         probe = walls or [ln for ln in dwg.lines if ln.role not in ("ignore", "door", "window")]
-        faces = sorted(_fuse(probe), key=lambda f: -f.length)[:4000]  # the longest faces decide
         hk = UNIT_MM[header] if header else None
         evidence: dict[float, int] = {}
         for k in ([hk] if hk else []) + [s for s in SCALES if s != hk]:
+            # each candidate fuses and pairs its lines in mm: FUSE_MM, DRIFT_MM and the range are mm
+            scaled = [replace(ln, a=_mul(ln.a, k), b=_mul(ln.b, k)) for ln in probe]
+            faces = sorted(_fuse(scaled), key=lambda f: -f.length)[:4000]  # the longest faces decide
             evidence[k] = len(
-                _pair_faces(
-                    faces, self.o.thickness_min / k, self.o.thickness_max / k, self.o.min_overlap / k, mark=False
-                )
+                _pair_faces(faces, self.o.thickness_min, self.o.thickness_max, self.o.min_overlap, mark=False)
             )
         best = max(evidence, key=lambda k: (evidence[k], k == 1.0))
         name = {v: n for n, v in UNIT_MM.items()}

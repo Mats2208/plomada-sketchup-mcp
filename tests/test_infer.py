@@ -215,6 +215,24 @@ def test_insunits_that_lie_are_overruled_by_the_walls(tmp_path):
     assert any("$INSUNITS says m" in a for a in res.report["assumptions"])
 
 
+@pytest.mark.parametrize(("k", "insunits", "unit"), [(0.001, 6, "m"), (0.001, 0, "m"), (0.1, 5, "cm"), (0.1, 0, "cm")])
+def test_thin_walls_pair_in_the_unit_they_are_drawn_in(tmp_path, k, insunits, unit):
+    # the probe fuses each unit's faces in mm: 0.15 m apart, the two faces of a wall are not one line
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = insunits
+    msp = doc.modelspace()
+    for ring in ([(0, 0), (6000, 0), (6000, 4000), (0, 4000)], [(150, 150), (5850, 150), (5850, 3850), (150, 3850)]):
+        msp.add_lwpolyline([(x * k, y * k) for x, y in ring], close=True, dxfattribs={"layer": "MUROS"})
+    doc.saveas(tmp_path / "sala.dxf")
+    res = infer_plan(tmp_path / "sala.dxf")
+    assert res.report["units"]["unit"] == unit
+    (w,) = res.plan.walls
+    assert (w.closed, w.thickness) == (True, 150.0)
+    assert sorted(v[:2] for v in w.axis) == pytest.approx([(75, 75), (75, 3925), (5925, 75), (5925, 3925)])
+    gt = plans.box()
+    _assert_same(gt, infer_plan(draft(gt, tmp_path / "box.dxf", faces="outlines", scale=k, insunits=insunits)).plan)
+
+
 def test_walls_inside_a_block(tmp_path):
     gt = plans.house()
     res = infer_plan(draft(gt, tmp_path / "blk.dxf", in_block=(5000.0, 3000.0), noise=False))
