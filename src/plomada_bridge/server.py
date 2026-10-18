@@ -16,17 +16,16 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import ezdxf
 from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__
-from .cadfile import TEMP_PREFIX, as_dxf, open_file, to_dwg
+from .cadfile import TEMP_PREFIX, open_file, to_dwg
 from .config import BridgeConfig, load_config
 from .connection import SketchUpClient
-from .dxf import DxfPlanError, read_plan
+from .dxf import DxfPlanError, load_drawing, read_plan
 from .dxfwrite import build_doc, write_plan
 from .errors import NOT_RESPONDING, BridgeError, NotResponding, describe
 from .infer import InferError, InferOptions, LayerRoles, infer_plan
@@ -859,14 +858,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             src = Path(dxf_path or "")
             if not src.is_file():
                 raise DxfPlanError(f"dxf_path {str(src)!r} is not a file")
-            dxf = as_dxf(src)
-            try:
-                return (*render(ezdxf.readfile(dxf), width), src.stem)
-            except (OSError, ezdxf.DXFStructureError) as exc:
-                raise DxfPlanError(f"cannot read {src.name} as DXF: {exc}") from None
-            finally:
-                if dxf != src:
-                    shutil.rmtree(dxf.parent, ignore_errors=True)
+            return (*render(load_drawing(src), width), src.stem)
 
         try:
             png, w, h, stem = await asyncio.to_thread(draw)

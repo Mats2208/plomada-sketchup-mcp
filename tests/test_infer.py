@@ -15,7 +15,7 @@ import pytest
 from mcp.client import Client
 
 import plans_infer as plans
-from conftest import FIXTURES, FakeExtension, make_config
+from conftest import FIXTURES, FakeExtension, broken_dxfs, make_config
 from drafter import Drafter, Seg, Style, draft
 from plomada_bridge import cadfile
 from plomada_bridge.dxf import read_plan
@@ -516,6 +516,9 @@ def test_refusals_name_the_problem(tmp_path, monkeypatch):
     (tmp_path / "junk.dxf").write_text("not a dxf", encoding="ascii")
     with pytest.raises(InferError, match=r"cannot read junk\.dxf as DXF"):
         infer_plan(tmp_path / "junk.dxf")
+    for path in broken_dxfs(tmp_path):  # cut off, a garbled handle: StopIteration and ValueError inside ezdxf
+        with pytest.raises(InferError, match=rf"^cannot read {path.name} as DXF: "):
+            infer_plan(path)
     doc = ezdxf.new()
     doc.modelspace().add_line((0, 0), (5000, 0), dxfattribs={"layer": "MUROS"})
     doc.saveas(tmp_path / "one_line.dxf")

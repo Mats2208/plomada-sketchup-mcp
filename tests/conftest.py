@@ -144,3 +144,16 @@ def run() -> Callable[..., Any]:
         return asyncio.run(coro)
 
     return _run
+
+
+def broken_dxfs(folder: Path) -> list[Path]:
+    """Two damaged copies of casos_prueba.dxf that ezdxf rejects with neither OSError nor DXFStructureError:
+    cut off inside its header (StopIteration) and with an entity handle garbled (ValueError)."""
+    lines = (FIXTURES / "casos_prueba.dxf").read_bytes().split(b"\n")
+    cut = folder / "cortado.dxf"
+    cut.write_bytes(b"\n".join(lines[:748]))
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == b"ENTITIES")
+    handle = next(i for i in range(start, len(lines)) if lines[i].strip() == b"5") + 1
+    garbled = folder / "ilegible.dxf"
+    garbled.write_bytes(b"\n".join([*lines[:handle], b"garbage\xff", *lines[handle + 1 :]]))
+    return [cut, garbled]

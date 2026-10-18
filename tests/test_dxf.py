@@ -8,7 +8,7 @@ import shutil
 import ezdxf
 import pytest
 
-from conftest import DXF, FIXTURES
+from conftest import DXF, FIXTURES, broken_dxfs
 from plomada_bridge.dxf import APP_ID, DxfPlanError, read_plan, records
 
 
@@ -102,6 +102,12 @@ def test_a_dxf_without_records_and_a_missing_file(tmp_path):
         read_plan(empty)
     with pytest.raises(DxfPlanError, match="is not a file"):
         read_plan(tmp_path / "nope.dxf")
+
+
+def test_a_damaged_dxf_is_refused_by_name(tmp_path):
+    for path in broken_dxfs(tmp_path):
+        with pytest.raises(DxfPlanError, match=rf"^cannot read {path.name} as DXF: "):
+            read_plan(path)
 
 
 def test_unseen_four_building_plan_parses_completely():

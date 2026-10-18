@@ -62,18 +62,15 @@ import fnmatch
 import itertools
 import math
 import re
-import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
-import ezdxf
 from ezdxf.document import Drawing
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .cadfile import as_dxf
-from .dxf import DxfPlanError
+from .dxf import DxfPlanError, load_drawing
 from .models import Opening, Plan, Room, Wall, describe_error, parse_plan, polyline_length, ring_area
 
 Vec = tuple[float, float]
@@ -1538,17 +1535,10 @@ class _Inferrer:
         if not self.path.is_file():
             raise InferError(f"path {str(self.path)!r} is not a file")
         try:
-            source = as_dxf(self.path)
+            self.doc = load_drawing(self.path)
         except DxfPlanError as exc:
             raise InferError(str(exc)) from None
-        try:
-            doc = ezdxf.readfile(source)
-        except (OSError, ezdxf.DXFStructureError) as exc:
-            raise InferError(f"cannot read {self.path.name} as DXF: {exc}") from None
-        finally:
-            if source != self.path:
-                shutil.rmtree(source.parent, ignore_errors=True)
-        self.doc = doc
+        doc = self.doc
         return _Reader().read(doc)
 
     # 2. roles and units

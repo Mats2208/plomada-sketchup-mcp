@@ -156,6 +156,10 @@ FLATTEN_MM = 5.0  # largest sagitta of a flattened SPLINE or ELLIPSE
 JOIN_MM = 1.0  # LINE and ARC ends this close are one node
 RISER_MM = 175.0  # target riser of a stair drawn on a layer
 ROUND = 6  # decimals (nm) of the lengths the reader derives: ARC ends, opening offsets, stair goings
+# What ezdxf raises on a file it cannot parse: DXFError (DXFStructureError...), and from damaged tag streams
+# ValueError (an invalid handle, a number that is not one, bad UTF-8), KeyError, IndexError, TypeError and
+# StopIteration (the file ends early).
+READ_ERRORS = (OSError, ezdxf.DXFError, ValueError, KeyError, IndexError, TypeError, StopIteration)
 
 Units = Literal["auto", "mm", "cm", "m", "in", "ft"]
 UNIT_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "ft": 304.8}
@@ -854,15 +858,17 @@ def site(doc: Drawing, scale: float = 1.0, with_records: bool = False) -> dict[s
 # --- the plan -------------------------------------------------------------------------------
 
 
-def _load(p: Path) -> Drawing:
-    """The drawing at p; a .dwg is read through a temporary DXF (cadfile.as_dxf), removed afterwards."""
+def load_drawing(p: Path) -> Drawing:
+    """The drawing at p; a .dwg is read through a temporary DXF (cadfile.as_dxf), removed afterwards. A file
+    ezdxf cannot parse raises DxfPlanError "cannot read <name> as DXF: ...", whatever ezdxf raised (READ_ERRORS:
+    a damaged file surfaces as ValueError, KeyError or StopIteration as often as as DXFStructureError)."""
     from .cadfile import TEMP_PREFIX, as_dxf  # cadfile raises DxfPlanError, defined here
 
     src = as_dxf(p)
     try:
         return ezdxf.readfile(src)
-    except (OSError, ezdxf.DXFStructureError) as exc:
-        raise DxfPlanError(f"cannot read {p.name} as DXF: {exc}") from None
+    except READ_ERRORS as exc:
+        raise DxfPlanError(f"cannot read {p.name} as DXF: {str(exc) or 'it ends early or is malformed'}") from None
     finally:
         if src != p and src.parent.name.startswith(TEMP_PREFIX):
             shutil.rmtree(src.parent, ignore_errors=True)
@@ -927,7 +933,7 @@ def read_plan(path: str | Path, storey_height: float | None = None, units: Units
     p = Path(path)
     if not p.is_file():
         raise DxfPlanError(f"dxf_path {str(p)!r} is not a file")
-    doc = _load(p)
+    doc = load_drawing(p)
     acad = any(_has(e, APP_ID) for e in doc.entitydb.values())
     plomada = any(_has(e, PLOMADA_APP) for e in doc.modelspace())
     if not acad and not plomada and not _has_plomada_layer(doc):

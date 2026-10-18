@@ -9,7 +9,7 @@ import subprocess
 import ezdxf
 from ezdxf import units
 
-from conftest import DXF, FIXTURES, FakeExtension
+from conftest import DXF, FIXTURES, FakeExtension, broken_dxfs
 from plan05 import full_plan
 from plomada_bridge import cadfile, server
 from plomada_bridge.dxf import read_plan
@@ -166,9 +166,10 @@ def test_preview_plan_draws_a_plan_or_a_drawing_without_sketchup(run, tmp_path):
         drawing = await client.call_tool("preview_plan", {"dxf_path": str(DXF), "width": 640})
         neither = await client.call_tool("preview_plan", {})
         missing = await client.call_tool("preview_plan", {"dxf_path": str(tmp_path / "no.dxf")})
-        return plan, drawing, neither, missing
+        broken = [await client.call_tool("preview_plan", {"dxf_path": str(p)}) for p in broken_dxfs(tmp_path)]
+        return plan, drawing, neither, missing, broken
 
-    plan, drawing, neither, missing = run(_session(fake, tmp_path, body))
+    plan, drawing, neither, missing, broken = run(_session(fake, tmp_path, body))
     for result in (plan, drawing):
         assert not result.is_error, _text(result)
         image = next(c for c in result.content if c.type == "image")
@@ -177,4 +178,8 @@ def test_preview_plan_draws_a_plan_or_a_drawing_without_sketchup(run, tmp_path):
     assert '"bytes"' in _text(plan) and "plomada_preview_casa_minimalista.png" in _text(drawing)
     assert _text(neither) == "preview_plan refused its input (-32004): give plan or dxf_path, one of them. Fix it."
     assert "is not a file" in _text(missing)
+    for result, name in zip(broken, ("cortado.dxf", "ilegible.dxf"), strict=True):
+        assert result.is_error and _text(result).startswith(
+            f"preview_plan refused its input (-32004): cannot read {name} as DXF: "
+        )
     assert [m for m in fake.methods() if m != "hello"] == []  # SketchUp is never asked
