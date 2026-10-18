@@ -8,7 +8,7 @@ rem instance starts on it instead of the welcome screen: dev-empty-2025.skp
 rem in PLOMADA_HOME when it exists (the stock template was saved by a newer
 rem SketchUp and stops on a version warning), else the stock template.
 setlocal
-set "PLOMADA_DEV_DIR=C:\mcp\plomada-wt-05\extension\plomada"
+set "PLOMADA_DEV_DIR=C:\mcp\plomada-wt-06\extension\plomada"
 set "PLOMADA_PORT=7884"
 set "PLOMADA_HOME=%LOCALAPPDATA%\Plomada-dev"
 set "SU_DIR=C:\Program Files\SketchUp\SketchUp 2025\SketchUp"

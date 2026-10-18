@@ -88,6 +88,16 @@ a 17-riser L stair and 16 catalogue pieces.</sub>
 <sub>Curves (0.5). First the curved-wing DXF, then the same wing in SketchUp: its quarter-circle wall, the curved slab
 and a glass railing along a cantilevered balcony.</sub>
 
+<table>
+<tr>
+<td width="50%"><img src="docs/img/orbita_casa.gif" alt="The camera circles the reference house built from an AutoCAD MCP Pro DXF: garage with its car port, palms and trees, the fence, the back garden with the pool and loungers" width="100%"/></td>
+<td width="50%"><img src="docs/img/orbita_curva.gif" alt="The camera circles a curved hotel wing with no roof: the quarter-circle corner, a cantilevered balcony wrapping it with an edge band and a glass railing, an arched window, a curtain wall, a round column and the rooms inside" width="100%"/></td>
+</tr>
+</table>
+<sub>Recorded live in SketchUp 2025 through the MCP tools, one <code>create_scene</code> and <code>capture_view</code> per
+frame. Left, <code>build_from_autocad</code> of the reference DXF with its site; right, <code>build_plan</code> of the
+worked example in <a href="skill/reference/plan-input.md">the skill's plan reference</a>, exactly as written there.</sub>
+
 **From an ordinary drawing.** On the left, a drawing made with no Plomada in mind: in metres, every wall a separate
 rectangle, doors and windows as blocks, plus a grid, a dimension and a bed against a wall. On the right,
 `plan_from_dxf`'s draft written back with `write_plan_dxf`:
