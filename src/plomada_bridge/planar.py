@@ -116,7 +116,7 @@ def offset_segment(
         return [p0[0] + nx, p0[1] + ny], [p1[0] + nx, p1[1] + ny]
     c = centre(p0, p1, bulge)
     r = arc_radius(math.dist(p0[:2], p1[:2]), bulge)
-    scale = (r - math.copysign(d, bulge)) / r
+    scale = (r - d * math.copysign(1.0, bulge)) / r
     if scale <= 1e-9:
         return None
     return [c[0] + (p0[0] - c[0]) * scale, c[1] + (p0[1] - c[1]) * scale], [
