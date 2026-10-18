@@ -1922,6 +1922,12 @@ class _Inferrer:
                 continue
             chains.append(walk(r, 1))
         self.partner = partner
+        self.joined: dict[tuple[int, int], list[_Run]] = defaultdict(list)
+        for members in j.nodes.values():
+            for r, e in members:
+                self.joined[(id(r), e)] += [m for m, _ in members if m is not r]
+        for r, e, host in j.stems:
+            self.joined[(id(r), e)].append(host)
         return chains
 
     @staticmethod
@@ -2061,9 +2067,7 @@ class _Inferrer:
         for run, _ in chain:
             bands = list(run.stems)
             for end in (0, 1):
-                key = (id(run), end)
-                other = self.partner.get(key)
-                if other is not None or run.pts[end] is not None:
+                if self.joined.get((id(run), end)):
                     bands.append(self._end_zone(run, end))
             for g in run.openings:
                 if not g.emitted or not g.kind:
@@ -2106,17 +2110,16 @@ class _Inferrer:
         return out
 
     def _end_zone(self, run: _Run, end: int) -> tuple[float, float]:
-        """The stretch at a joined end that the other wall's footprint and the mitre occupy."""
+        """The stretch at a joined end that the other walls' footprints and the mitre occupy."""
         s = run.s_end(end)
-        other = self.partner.get((id(run), end))
-        t_other = other[0].t if other else max(run.t, self.o.thickness_max / 2.0)
-        sin = 1.0
-        if other:
-            sin = max(abs(_cross(run.out_dir(end), other[0].out_dir(other[1]))), 0.05)
-        cos = math.sqrt(max(0.0, 1.0 - sin * sin))
-        h = t_other / 2.0 / sin + run.t / 2.0 * cos / sin
-        if other and _dot(run.out_dir(end), other[0].out_dir(other[1])) < -0.99:
-            h = 0.0  # continues in line
+        p = run.end_point(end)
+        h = 0.0
+        for other in self.joined.get((id(run), end), []):
+            sin = _sin_at(run, other, p)
+            if sin < math.sin(math.radians(MIN_JUNCTION_DEG)):
+                continue  # runs in line with this end: it occupies none of it
+            cos = math.sqrt(max(0.0, 1.0 - sin * sin))
+            h = max(h, other.t / 2.0 / sin + run.t / 2.0 * cos / sin)
         return (s - h, s) if end == 1 else (s, s + h)
 
     def _record(self, run: _Run, g: _Gap, lo: float, hi: float, segs: list, wall_id: str) -> dict[str, Any] | None:
