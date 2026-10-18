@@ -219,6 +219,43 @@ def test_walls_drawn_as_closed_outlines(tmp_path):
     assert res.report["unpaired"]["faces"] == 0
 
 
+def test_walls_drawn_only_as_solid_hatches(tmp_path):
+    gt = plans.box()
+    path = draft(gt, tmp_path / "hatch.dxf", faces="outlines")
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    for pl in list(msp.query("LWPOLYLINE[layer=='MUROS']")):
+        hatch = msp.add_hatch(color=8, dxfattribs={"layer": "MUROS"})
+        hatch.paths.add_polyline_path([p[:2] for p in pl.get_points("xy")], is_closed=True)
+        msp.delete_entity(pl)
+    doc.saveas(path)
+    res = infer_plan(path)
+    _assert_same(gt, res.plan)
+    assert res.report["unpaired"]["faces"] == 0  # hatch edges are evidence, never unpaired
+
+
+def test_openings_against_junctions_double_and_sliding_doors(tmp_path):
+    gt = plans.corners()
+    path = draft(gt, tmp_path / "corners.dxf", double_doors=("D1",), sliding_doors=("D3",))
+    res = infer_plan(path)
+    assert _coverage(gt, res.plan)[0] == 1.0 and _coverage(res.plan, gt)[0] == 1.0
+    have = [(_opening(res.plan, o), o, e) for o, e in zip(res.plan.openings, res.report["openings"], strict=True)]
+    assert len(have) == len(gt.openings)
+    for o in gt.openings:
+        w = _opening(gt, o)
+        h, rec, entry = next(x for x in have if math.dist(x[0]["centre"], w["centre"]) <= 5.0)
+        assert h["kind"] == w["kind"] and abs(h["width"] - w["width"]) <= 5.0, o.id
+        if o.id == "D1":
+            assert entry["assumed"] == ["double door drawn with two leaves; built as one leaf"]
+        elif o.id == "D2":  # hard against P's face: found from Q's free end
+            assert math.dist(h["hinge"], w["hinge"]) <= 5.0 and math.dist(h["side"], w["side"]) <= 5.0
+            assert rec.offset >= 60.0 and rec.offset + rec.width <= 860.0
+        elif o.id == "D3":
+            assert entry["evidence"] == "door linework on PUERTAS" and entry["assumed"]
+    if RUBY:
+        assert _solver(res.plan, tmp_path)["ok"]
+
+
 def test_an_empty_gap_is_reported_not_guessed(tmp_path):
     gt = plans.house()
     path = draft(gt, tmp_path / "gap.dxf", skip_openings=("V2",))

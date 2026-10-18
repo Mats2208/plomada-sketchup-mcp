@@ -161,6 +161,8 @@ class Style:
     noise: bool = True
     in_block: Vec | None = None  # draw everything inside one block inserted here
     skip_openings: tuple[str, ...] = ()  # openings drawn as bare gaps (jambs only)
+    double_doors: tuple[str, ...] = ()  # two leaves, one hinged at each jamb
+    sliding_doors: tuple[str, ...] = ()  # two panels in the gap, no swing arc
 
 
 class Drafter:
@@ -266,6 +268,22 @@ class Drafter:
                 self.window(seg, s0, s1)
 
     def door(self, seg: Seg, o: Any, s0: float, s1: float) -> None:
+        if o.id in self.st.sliding_doors:
+            half = (s1 - s0) / 2.0
+            for lo, off in ((s0, -25.0), (s0 + half - 50.0, 25.0)):
+                a, b = seg.point(lo, off - 20.0), seg.point(lo + half + 50.0, off - 20.0)
+                c, d = seg.point(lo + half + 50.0, off + 20.0), seg.point(lo, off + 20.0)
+                self.lw([a, b, c, d], self.st.doors, closed=True)
+            return
+        if o.id in self.st.double_doors:
+            mid = (s0 + s1) / 2.0
+            for a, b, far in ((s0, mid, False), (mid, s1, True)):
+                hand = "left" if far == (o.swing == "in") else "right"  # hinged at the outer jambs
+                self._leaf(seg, type(o)(**{**o.model_dump(), "hand": hand}), a, b)
+            return
+        self._leaf(seg, o, s0, s1)
+
+    def _leaf(self, seg: Seg, o: Any, s0: float, s1: float) -> None:
         sigma = 1 if o.swing == "in" else -1
         far = (o.hand == "left") == (o.swing == "in")
         sh, so = (s1, s0) if far else (s0, s1)

@@ -131,3 +131,23 @@ def moved(plan: Plan, deg: float = 0.0, dx: float = 0.0, dy: float = 0.0) -> Pla
     for r in wire["rooms"]:
         r["at"] = tr(r["at"])
     return parse_plan(wire)
+
+
+def corners() -> Plan:
+    """Openings hard against junctions: a door against a tee's face, a double door, a sliding door."""
+    return parse_plan(
+        {
+            "walls": [
+                _wall("EXT", [[0, 0], [10000, 0], [10000, 7000], [0, 7000]], 200, True),
+                _wall("P", [[5000, 0], [5000, 7000]], 120),
+                _wall("Q", [[5000, 3500], [10000, 3500]], 100),
+            ],
+            "openings": [
+                _op("D1", "EXT", "door", 1000, 1600),  # drawn as a double door
+                _op("D2", "Q", "door", 60, 800, "out", "left"),  # against P's face
+                _op("D3", "P", "door", 1000, 900),  # drawn as a sliding door: no arc
+                _op("V1", "EXT", "window", 6000, 2000),
+            ],
+            "rooms": [_room("R1", "ESTAR", (2500, 3500))],
+        }
+    )
