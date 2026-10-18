@@ -76,13 +76,13 @@ from .models import Opening, Plan, Room, Wall, describe_error, parse_plan, ring_
 Vec = tuple[float, float]
 
 ANGLE_TOL = math.radians(1.0)  # face lines this close in direction are parallel
-DRIFT_MM = 2.0  # paired faces may diverge this much over their overlap
+DRIFT_MM = 3.0  # paired faces may diverge this much over their overlap
 FUSE_ANGLE = math.radians(0.1)  # collinear wall lines that fuse into one face
 FUSE_MM = 0.5
 CENTRE_TOL_MM = 2.0  # concentric arcs
-AXIS_ANGLE = math.radians(0.5)  # pieces on one axis line
-AXIS_TOL_MM = 2.0
-THICK_TOL_MM = 1.5  # pieces of one run differ at most this in thickness
+AXIS_ANGLE = math.radians(1.0)  # pieces on one axis line
+AXIS_TOL_MM = 5.0
+THICK_TOL_MM = 3.0  # pieces of one run differ at most this in thickness
 TOUCH_MM = 1.0  # pieces this close along an axis touch
 SNAP_STEP_MM = 5.0
 SNAP_WITHIN_MM = 1.0
@@ -515,9 +515,11 @@ def _layer_roles(layers: list[str], mapping: LayerRoles | None) -> tuple[dict[st
             up = layer.upper()
             if up not in roles and any(fnmatch.fnmatchcase(up, p.upper()) for p in pats):
                 roles[up] = role
-    auto = tuple(r for r in ROLE_TOKENS if r == "other" or r not in how)
+    auto = tuple(r for r in ROLE_TOKENS if r in ("other", "ignore") or r not in how)  # ignore adds to the names
     for role in auto:
         how.setdefault(role, "names")
+    if how["ignore"] == "mapping":
+        how["ignore"] = "mapping and names"
     for layer in layers:
         up = layer.upper()
         if up in roles:
@@ -618,23 +620,37 @@ def _fuse(lines: list[_Line]) -> list[_Face]:
             m = k + 1
             while m < len(rows) and rows[m][0] - rows[m - 1][0] <= FUSE_MM:
                 m += 1
-            w = sum(r[0] for r in rows[k:m]) / (m - k)
             spans = sorted(
                 ((min(_dot(u, ln.a), _dot(u, ln.b)), max(_dot(u, ln.a), _dot(u, ln.b)), ln) for _, ln in rows[k:m]),
                 key=lambda r: (r[0], r[1]),
             )
-            lo, hi, group = spans[0][0], spans[0][1], [spans[0][2]]
+            hi, group = spans[0][1], [spans[0][2]]
             for s0, s1, ln in spans[1:]:
                 if s0 <= hi + FUSE_MM:
                     hi = max(hi, s1)
                     group.append(ln)
                     continue
-                faces.append(_Face(_add(_mul(u, lo), _mul(n, w)), _add(_mul(u, hi), _mul(n, w)), group))
-                lo, hi, group = s0, s1, [ln]
-            faces.append(_Face(_add(_mul(u, lo), _mul(n, w)), _add(_mul(u, hi), _mul(n, w)), group))
+                faces.append(_fused(group))
+                hi, group = s1, [ln]
+            faces.append(_fused(group))
             k = m
         i = j
     return faces
+
+
+def _fused(group: list[_Line]) -> _Face:
+    """One face through collinear lines: the direction of the longest, offset to their weighted mean, from
+    the first to the last of their endpoints along it."""
+    ref = max(group, key=lambda ln: ln.length)
+    if len(group) == 1:
+        return _Face(ref.a, ref.b, group)
+    u = _mul(_sub(ref.b, ref.a), 1.0 / ref.length)
+    n = (-u[1], u[0])
+    total = sum(ln.length for ln in group)
+    shift = sum(ln.length * _dot(n, _sub(_mul(_add(ln.a, ln.b), 0.5), ref.a)) for ln in group) / total
+    xs = [_dot(u, _sub(p, ref.a)) for ln in group for p in (ln.a, ln.b)]
+    base = _add(ref.a, _mul(n, shift))
+    return _Face(_add(base, _mul(u, min(xs))), _add(base, _mul(u, max(xs))), group)
 
 
 def _fuse_arcs(arcs: list[_Arc]) -> list[_ArcFace]:
@@ -1009,31 +1025,44 @@ class _Run:
 
 
 def _group_lines(pieces: list[_Piece]) -> list[tuple[_Frame, list[tuple[float, float]]]]:
-    """Straight pieces on one axis line and of one thickness: (frame, intervals in s)."""
-    groups: list[tuple[_Frame, list[tuple[float, float]], list[float]]] = []
+    """Straight pieces on one axis line and of one thickness: (frame, intervals in s). The frame is fitted
+    to all its pieces (length-weighted principal axis of their ends), so one short piece does not tilt a
+    long wall."""
+    groups: list[tuple[_Frame, list[_Piece]]] = []
     for p in sorted((p for p in pieces if p.kind == "line"), key=lambda p: -p.length):
         phi = _canon(_sub(p.p1, p.p0))
-        for frame, spans, ts in groups:
+        for frame, members in groups:
             if _angle_diff(frame.phi, phi) > AXIS_ANGLE or abs(frame.t - p.t) > THICK_TOL_MM:
                 continue
             if abs(_dot(frame.n, p.p0) - frame.w) > AXIS_TOL_MM or abs(_dot(frame.n, p.p1) - frame.w) > AXIS_TOL_MM:
                 continue
-            spans.append(tuple(sorted((_dot(frame.u, p.p0), _dot(frame.u, p.p1)))))
-            ts.append(p.t)
-            if p.stack:
-                frame.stacks.append(spans[-1])
+            members.append(p)
             break
         else:
             u = _dir(phi)
             n = (-u[1], u[0])
-            w = (_dot(n, p.p0) + _dot(n, p.p1)) / 2.0
-            frame = _Frame("line", p.t, phi=phi, u=u, n=n, w=w)
-            groups.append((frame, [tuple(sorted((_dot(u, p.p0), _dot(u, p.p1))))], [p.t]))
-            if p.stack:
-                frame.stacks.append(groups[-1][1][0])
+            groups.append((_Frame("line", p.t, phi=phi, u=u, n=n, w=(_dot(n, p.p0) + _dot(n, p.p1)) / 2.0), [p]))
     out = []
-    for frame, spans, ts in groups:
-        frame.t = _snap(sum(ts) / len(ts))
+    for frame, members in groups:
+        weights = [m.length for m in members]
+        total = sum(weights)
+        cx = sum(wt * (m.p0[0] + m.p1[0]) / 2.0 for wt, m in zip(weights, members, strict=True)) / total
+        cy = sum(wt * (m.p0[1] + m.p1[1]) / 2.0 for wt, m in zip(weights, members, strict=True)) / total
+        sxx = syy = sxy = 0.0
+        for wt, m in zip(weights, members, strict=True):
+            for q in (m.p0, m.p1):
+                dx, dy = q[0] - cx, q[1] - cy
+                sxx, syy, sxy = sxx + wt * dx * dx, syy + wt * dy * dy, sxy + wt * dx * dy
+        phi = _canon(_dir(0.5 * math.atan2(2.0 * sxy, sxx - syy)))
+        if _angle_diff(phi, frame.phi) > AXIS_ANGLE:
+            phi = frame.phi
+        frame.phi = phi
+        frame.u = _dir(phi)
+        frame.n = (-frame.u[1], frame.u[0])
+        frame.w = _dot(frame.n, (cx, cy))
+        frame.t = _snap(sum(wt * m.t for wt, m in zip(weights, members, strict=True)) / total)
+        spans = [tuple(sorted((_dot(frame.u, m.p0), _dot(frame.u, m.p1)))) for m in members]
+        frame.stacks = [sp for sp, m in zip(spans, members, strict=True) if m.stack]
         out.append((frame, spans))
     return out
 
@@ -1195,6 +1224,8 @@ def _classify(frame: _Frame, g0: float, g1: float, ev: _Evidence) -> _Gap:
             continue
         if max(abs(na), abs(nb)) >= half - 1.0:
             continue
+        if min(sa, sb) < g0 - frame.t or max(sa, sb) > g1 + frame.t:
+            continue  # longer than the gap: an axis or grid line, not glass
         if min(max(sa, sb), g1) - max(min(sa, sb), g0) >= 0.8 * w:
             gap.kind, gap.evidence = "window", f"glass line on {ln.layer}"
             return gap
@@ -1757,7 +1788,7 @@ class _Inferrer:
                 g0 = r.s_end(e)
                 g1 = g0 + face if e == 1 else g0 - face
                 lo, hi = min(g0, g1), max(g0, g1)
-                if any(t is not r and t is not s and self._blocks(t, p, d, face) for t in runs):
+                if any(t is not r and t is not s and self._blocks(t, r, p, d, face) for t in runs):
                     continue
                 gap = _classify(r.frame, lo, hi, self.evidence)
                 if not gap.kind:
@@ -1785,9 +1816,16 @@ class _Inferrer:
                     r.links += 1
 
     @staticmethod
-    def _blocks(t: _Run, p: Vec, d: Vec, dist: float) -> bool:
-        """Run t lies across the ray from p along d within dist."""
+    def _blocks(t: _Run, r: _Run, p: Vec, d: Vec, dist: float) -> bool:
+        """Run t stands in the way of the ray from p along d within dist: it crosses the ray, or it continues
+        r's own axis ahead (that gap between the two was classified already)."""
         n = (-d[1], d[0])
+        if t.frame.kind == "line" and abs(_cross(t.frame.u, d)) < math.sin(ANGLE_TOL):
+            for end in (0, 1):
+                q = t.end_point(end)
+                if abs(_dot(n, _sub(q, p))) <= (t.t + r.t) / 2.0 and 0.0 < _dot(_sub(q, p), d) < dist:
+                    return True
+            return False
         ray = _Frame("line", 0.0, phi=_canon(d), u=d, n=n, w=_dot(n, p))
         for x in _intersections(t.frame, ray):
             along = _dot(_sub(x, p), d)
@@ -2373,7 +2411,8 @@ class _Inferrer:
         for w in plan.walls:
             paired = total = 0.0
             for r in by_wall.get(w.id, []):
-                inner = [(max(lo, r.a), min(hi, r.b)) for lo, hi in r.paired if min(hi, r.b) > max(lo, r.a)]
+                spans = r.paired + r.stems  # a T stem explains the face it interrupts
+                inner = [(max(lo, r.a), min(hi, r.b)) for lo, hi in spans if min(hi, r.b) > max(lo, r.a)]
                 ext = max(0.0, r.a0 - r.a) + max(0.0, r.b - r.b0)
                 holes = sum(g.s1 - g.s0 for g in r.openings if g.kind)
                 paired += _union_length(inner)
