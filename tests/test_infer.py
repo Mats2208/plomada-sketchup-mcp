@@ -263,6 +263,23 @@ def test_walls_drawn_only_as_solid_hatches(tmp_path):
     assert res.report["unpaired"]["faces"] == 0  # hatch edges are evidence, never unpaired
 
 
+def test_solids_and_texts_with_a_downward_extrusion_are_read_in_world_coordinates(tmp_path):
+    # an exploded mirrored block leaves extrusion (0, 0, -1): OCS x is world -x
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    down = {"layer": "MUROS", "extrusion": (0, 0, -1)}
+    for x0, y0, x1, y1 in ((0, 0, 6000, 150), (0, 3850, 6000, 4000), (0, 150, 150, 3850), (5850, 150, 6000, 3850)):
+        msp.add_solid([(-x0, y0), (-x1, y0), (-x0, y1), (-x1, y1)], dxfattribs=down)
+    msp.add_text("SALA", height=200, dxfattribs={"layer": "TEXTO", "insert": (-3000, 2000), "extrusion": (0, 0, -1)})
+    doc.saveas(tmp_path / "espejo.dxf")
+    plan = infer_plan(tmp_path / "espejo.dxf").plan
+    (w,) = plan.walls
+    assert (w.closed, w.thickness) == (True, 150.0)
+    assert sorted(v[:2] for v in w.axis) == pytest.approx([(75, 75), (75, 3925), (5925, 75), (5925, 3925)])
+    (room,) = plan.rooms
+    assert (room.name, room.at) == ("SALA", pytest.approx((3000.0, 2000.0)))
+
+
 def test_openings_against_junctions_double_and_sliding_doors(tmp_path):
     gt = plans.corners()
     path = draft(gt, tmp_path / "corners.dxf", double_doors=("D1",), sliding_doors=("D3",))

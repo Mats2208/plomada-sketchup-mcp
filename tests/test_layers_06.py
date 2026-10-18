@@ -108,6 +108,40 @@ def test_circles_and_old_polylines_are_walls(tmp_path):
     assert old["closed"] is False and old["axis"] == [[0.0, 0.0], [4000.0, 0.0, 0.25], [4000.0, 3000.0]]
 
 
+def test_polylines_and_inserts_with_a_downward_extrusion_are_read_in_world_coordinates(tmp_path):
+    # a mirrored or exploded block leaves extrusion (0, 0, -1): OCS x is world -x and bulges turn the other way
+    down = {"extrusion": (0, 0, -1)}
+    doc, msp = _doc()
+    msp.add_lwpolyline([(0, 0), (5000, 0)], dxfattribs={"layer": "PLOMADA-MURO-200", **down})
+    msp.add_lwpolyline([(1000, 0), (1900, 0)], dxfattribs={"layer": "PLOMADA-PUERTA", **down})
+    old = msp.add_polyline2d([(0, 3000), (4000, 3000), (4000, 6000)], dxfattribs={"layer": "PLOMADA-MURO-150", **down})
+    old.vertices[1].dxf.bulge = 0.25
+    msp.add_lwpolyline([(10000, 0, 0.5), (12000, 0, 0)], format="xyb", dxfattribs={"layer": "PLOMADA-MURO-200", **down})
+    msp.add_lwpolyline([(0, 0), (5000, 0), (5000, 3000)], close=True, dxfattribs={"layer": "PLOMADA-LOSA", **down})
+    doc.layers.add("SITIO-PAVIMENTO")
+    msp.add_lwpolyline(
+        [(0, -1000), (3000, -1000), (3000, -2000)], close=True, dxfattribs={"layer": "SITIO-PAVIMENTO", **down}
+    )
+    doc.blocks.new("SITIO_ARBOL").add_circle((0, 0), 500)
+    msp.add_blockref("SITIO_ARBOL", (3000, 8000), dxfattribs={"rotation": 30, **down})
+    doc.blocks.new("SOFA").add_line((0, 0), (100, 0))
+    sofa = msp.add_blockref("SOFA", (1000, 500), dxfattribs={"layer": "PLOMADA-MUEBLE", **down})
+    parsed = read_plan(_save(doc, tmp_path))
+    wire = parsed.plan.to_wire()
+    straight, bent, arc = wire["walls"]
+    assert straight["axis"] == [[0.0, 0.0], [-5000.0, 0.0]]
+    assert bent["axis"] == [[0.0, 3000.0], [-4000.0, 3000.0, -0.25], [-4000.0, 6000.0]]
+    assert arc["axis"] == [[-10000.0, 0.0, -0.5], [-12000.0, 0.0]]
+    (door,) = wire["openings"]
+    assert (door["wall"], door["offset"], door["width"]) == (straight["id"], 1000.0, 900.0)
+    assert wire["slabs"][0]["outline"] == [[0.0, 0.0], [-5000.0, 0.0], [-5000.0, 3000.0]]
+    assert wire["site"]["paving"][0]["points"] == [[0.0, -1000.0], [-3000.0, -1000.0], [-3000.0, -2000.0]]
+    (tree,) = wire["site"]["objects"]
+    assert tree["at"] == [-3000.0, 8000.0] and tree["rotation"] == pytest.approx(150.0)
+    assert wire["furniture"] == []
+    assert parsed.warnings == [f"furniture {sofa.dxf.handle} (SOFA) skipped: mirrored (its extrusion points down)"]
+
+
 def test_chain_joins_through_degree_two_nodes_only():
     # B is drawn backwards and 0.5 mm off A's end; C continues it; D would make the node at 3000 a T
     pieces = [("A", [[0, 0], [1000, 0]]), ("B", [[2000, 0], [1000, 0.5]]), ("C", [[2000, 0], [3000, 0]])]

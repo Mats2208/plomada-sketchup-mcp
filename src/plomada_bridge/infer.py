@@ -476,6 +476,7 @@ class _Reader:
             raw = e.plain_text()
             aligned = e.dxf.get("halign", 0) or e.dxf.get("valign", 0)
             at = e.dxf.get("align_point") if aligned and e.dxf.hasattr("align_point") else e.dxf.insert
+            at = e.ocs().to_wcs(at)  # a TEXT or ATTRIB stands in its OCS (x is -x under a downward extrusion)
             height = float(e.dxf.get("height", 0.0) or 0.0)
         raw = raw.replace("\\U+00B2", "²").replace("\\U+00b2", "²")
         if raw.strip():
@@ -533,8 +534,7 @@ class _Reader:
         elif kind == "HATCH":
             self.hatch(e, layer, block, brole)
         elif kind in ("SOLID", "TRACE"):
-            v = [e.dxf.vtx0, e.dxf.vtx1, e.dxf.vtx3, e.dxf.vtx2]  # DXF order 0 1 3 2 walks the outline
-            ring = [(float(q.x), float(q.y)) for q in v]
+            ring = [(float(q.x), float(q.y)) for q in e.wcs_vertices()]  # DXF order 0 1 3 2, in WCS
             for p, q in zip(ring, ring[1:] + ring[:1], strict=True):
                 self.line(p, q, layer, block, brole, True)
         elif kind in ("TEXT", "MTEXT", "ATTRIB"):

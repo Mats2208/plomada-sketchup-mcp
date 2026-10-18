@@ -71,6 +71,7 @@ from typing import Any, Literal
 import ezdxf
 from ezdxf.document import Drawing
 from ezdxf.enums import TextEntityAlignment
+from ezdxf.math import Vec3
 
 from . import planar
 from .config import CONFIG
@@ -353,23 +354,54 @@ def _arc_vertices(arc: Any) -> list[list[float]]:
     return [[_r(p.x), _r(p.y), b] for p in pts[:-1]] + [[_r(pts[-1].x), _r(pts[-1].y)]]
 
 
+def _plain(entity: Any) -> bool:
+    """True when the entity's OCS is the WCS: its extrusion is +z, the DXF default."""
+    ext = entity.dxf.extrusion
+    return abs(ext.x) < 1e-9 and abs(ext.y) < 1e-9 and ext.z > 0
+
+
+def _in_wcs(entity: Any, pts: list[tuple[float, float, float, float]], ocs: bool = True) -> list[list[float]]:
+    """OCS (x, y, z, bulge) of a 2D polyline as WCS [x, y] / [x, y, bulge] vertices, zero bulges dropped. A
+    downward extrusion (a mirrored or exploded block) mirrors the plane seen from +z: x turns to -x and the
+    bulges turn the other way. A +z extrusion, or ocs False (points already in WCS), passes them through."""
+    if ocs and not _plain(entity):
+        sign = -1.0 if entity.dxf.extrusion.z < 0 else 1.0
+        wcs = entity.ocs().points_to_wcs(Vec3(x, y, z) for x, y, z, _ in pts)
+        pts = [(p.x + 0.0, p.y + 0.0, 0.0, sign * b) for p, (_, _, _, b) in zip(wcs, pts, strict=True)]
+    return [[float(x), float(y), float(b)] if b else [float(x), float(y)] for x, y, _, b in pts]
+
+
+def _placed(ins: Any) -> tuple[list[float], float]:
+    """An INSERT's WCS point and the WCS direction of its block's x axis, degrees CCW (the insert point
+    and rotation are in its OCS)."""
+    at, rotation = ins.dxf.insert, float(ins.dxf.get("rotation", 0.0))
+    if _plain(ins):
+        return [float(at.x), float(at.y)], rotation
+    ocs = ins.ocs()
+    p, x = ocs.to_wcs(at), ocs.to_wcs(Vec3.from_deg_angle(rotation))
+    return [p.x + 0.0, p.y + 0.0], _r(math.degrees(math.atan2(x.y, x.x)) % 360.0)
+
+
 def vertices(entity: Any, scale: float = 1.0) -> tuple[list[list[float]], bool]:
-    """The entity as [x, y] / [x, y, bulge] vertices in mm and its closed flag: an LWPOLYLINE or 2D
-    POLYLINE with its bulges (zeros dropped), a LINE, an ARC with its bulge, a CIRCLE as a ring of two half
-    circles, a SPLINE or ELLIPSE flattened to straight vertices within FLATTEN_MM."""
+    """The entity as [x, y] / [x, y, bulge] WCS vertices in mm and its closed flag: an LWPOLYLINE or 2D
+    POLYLINE (drawn in its OCS, _in_wcs) with its bulges, zeros dropped, a 3D POLYLINE, a LINE, an ARC with
+    its bulge, a CIRCLE as a ring of two half circles, a SPLINE or ELLIPSE flattened to straight vertices
+    within FLATTEN_MM."""
     kind = entity.dxftype()
     if kind == "LWPOLYLINE":
-        pts = [[float(x), float(y), float(b)] if b else [float(x), float(y)] for x, y, b in entity.get_points("xyb")]
+        z = float(entity.dxf.elevation)
+        pts = _in_wcs(entity, [(x, y, z, b) for x, y, b in entity.get_points("xyb")])
         closed = bool(entity.closed)
     elif kind == "POLYLINE":
         if entity.is_poly_face_mesh or entity.is_polygon_mesh:
             raise DxfPlanError(f"entity {entity.dxf.handle} is a POLYLINE mesh, not a polyline")
-        pts = []
+        raw = []
         for v in entity.vertices:
             if v.dxf.flags & 16:  # a spline frame control point, not on the curve
                 continue
-            x, y, b = float(v.dxf.location.x), float(v.dxf.location.y), float(v.dxf.get("bulge", 0.0))
-            pts.append([x, y, b] if b else [x, y])
+            loc = v.dxf.location
+            raw.append((float(loc.x), float(loc.y), float(loc.z), float(v.dxf.get("bulge", 0.0))))
+        pts = _in_wcs(entity, raw, ocs=entity.is_2d_polyline)  # a 3D polyline is drawn in WCS
         closed = bool(entity.is_closed)
     elif kind == "LINE":
         s, e = entity.dxf.start, entity.dxf.end
@@ -771,7 +803,8 @@ def furniture(doc: Drawing, scale: float = 1.0) -> tuple[list[dict[str, Any]], l
     block's ITEM attribute, else its name lowercased without the ARCH_ prefix; at is the insert point,
     which stands for the piece's back-left corner (the block origin, as arch_catalogue_insert places it),
     and rotation is degrees CCW about it. A PLOMADA furniture payload on the insert supplies the id and
-    item. A scaled or mirrored insert is skipped with a warning."""
+    item. A scaled or mirrored insert (a negative scale, or an extrusion pointing down) is skipped with a
+    warning."""
     out: list[dict[str, Any]] = []
     warnings: list[str] = []
     for ins in doc.modelspace().query("INSERT"):
@@ -785,15 +818,18 @@ def furniture(doc: Drawing, scale: float = 1.0) -> tuple[list[dict[str, Any]], l
         if any(abs(s - 1.0) > 1e-6 for s in scale_xy):
             warnings.append(f"furniture {ins.dxf.handle} ({name}) skipped: scaled or mirrored {scale_xy}")
             continue
-        at = ins.dxf.insert
+        if ins.dxf.extrusion.z < 0:
+            warnings.append(f"furniture {ins.dxf.handle} ({name}) skipped: mirrored (its extrusion points down)")
+            continue
+        at, rotation = _placed(ins)
         out.append(
             {
                 "v": 1,
                 "kind": "furniture",
                 "id": ins.dxf.handle,
                 "item": item.strip().lower(),
-                "at": [float(at.x) * scale, float(at.y) * scale],
-                "rotation": float(ins.dxf.get("rotation", 0.0)),
+                "at": [at[0] * scale, at[1] * scale],
+                "rotation": rotation,
                 **_annotation(ins, "furniture", scale),
             }
         )
@@ -812,13 +848,13 @@ def site(doc: Drawing, scale: float = 1.0) -> dict[str, list[dict[str, Any]]]:
     for ins in msp.query("INSERT"):
         name = ins.dxf.name
         if name.upper().startswith(SITE_PREFIX):
-            at = ins.dxf.insert
+            at, rotation = _placed(ins)
             out["objects"].append(
                 {
                     "id": ins.dxf.handle,
                     "item": name[len(SITE_PREFIX) :].upper(),
-                    "at": [float(at.x) * scale, float(at.y) * scale],
-                    "rotation": float(ins.dxf.get("rotation", 0.0)),
+                    "at": [at[0] * scale, at[1] * scale],
+                    "rotation": rotation,
                     **_annotation(ins, "site", scale),
                 }
             )
