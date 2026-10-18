@@ -234,6 +234,50 @@ def _union_length(intervals: list[tuple[float, float]]) -> float:
     return total
 
 
+class _Grid:
+    """Items by bounding box on a uniform grid; query returns those sharing a cell with a box, in the order
+    they were added (so every scan stays deterministic). A box over 4096 cells goes to a list every query
+    returns."""
+
+    def __init__(self, cell: float = 2000.0) -> None:
+        self.cell = cell
+        self.cells: dict[tuple[int, int], list[int]] = defaultdict(list)
+        self.big: list[int] = []
+        self.items: list[Any] = []
+
+    def _span(self, box: tuple[float, float, float, float]) -> tuple[range, range]:
+        c = self.cell
+        return range(math.floor(box[0] / c), math.floor(box[2] / c) + 1), range(
+            math.floor(box[1] / c), math.floor(box[3] / c) + 1
+        )
+
+    def add(self, box: tuple[float, float, float, float], item: Any) -> None:
+        k = len(self.items)
+        self.items.append(item)
+        xs, ys = self._span(box)
+        if len(xs) * len(ys) > 4096:
+            self.big.append(k)
+            return
+        for i in xs:
+            for j in ys:
+                self.cells[(i, j)].append(k)
+
+    def query(self, box: tuple[float, float, float, float]) -> list[Any]:
+        xs, ys = self._span(box)
+        if len(xs) * len(ys) > 4096:
+            return list(self.items)
+        found = set(self.big)
+        for i in xs:
+            for j in ys:
+                found.update(self.cells.get((i, j), ()))
+        return [self.items[k] for k in sorted(found)]
+
+
+def _box(points: list[Vec], grow: float = 0.0) -> tuple[float, float, float, float]:
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return min(xs) - grow, min(ys) - grow, max(xs) + grow, max(ys) + grow
+
+
 # --- primitives -------------------------------------------------------------------------
 
 
@@ -1137,7 +1181,27 @@ class _Evidence:
     doors: list[tuple[list[Vec], str]]  # door-role items: sample points, description
     windows: list[tuple[list[Vec], str]]
     glass: list[_Line]  # loose straight lines that may be glass
-    used_arcs: set[int] = field(default_factory=set)
+    used_arcs: set[int] = field(default_factory=set)  # id() of the arcs a door took
+    grids: dict[str, _Grid] = field(default_factory=dict)
+
+    def index(self) -> _Evidence:
+        for key, items, box in (
+            ("arcs", self.arcs, lambda a: _box([a.c], a.r)),
+            ("doors", self.doors, lambda it: _box(it[0])),
+            ("windows", self.windows, lambda it: _box(it[0])),
+            ("glass", self.glass, lambda ln: _box([ln.a, ln.b])),
+        ):
+            grid = self.grids[key] = _Grid()
+            for item in items:
+                grid.add(box(item), item)
+        return self
+
+    def near(self, box: tuple[float, float, float, float]) -> _Evidence:
+        """The evidence whose boxes come near box, sharing the record of used arcs."""
+        g = self.grids
+        return _Evidence(
+            g["arcs"].query(box), g["doors"].query(box), g["windows"].query(box), g["glass"].query(box), self.used_arcs
+        )
 
 
 def _is_leaf(ln: _Line, swings: list[_Arc]) -> bool:
@@ -1194,7 +1258,7 @@ def _classify(frame: _Frame, g0: float, g1: float, ev: _Evidence) -> _Gap:
             gap.assumed.append("double door drawn with two leaves; built as one leaf")
     if pick is not None:
         arc = ev.arcs[pick]
-        ev.used_arcs.add(pick)
+        ev.used_arcs.add(id(arc))
         sc, _ = frame.local(arc.c)
         gap.kind = "door"
         gap.hinge = g0 if abs(sc - g0) <= abs(sc - g1) else g1
@@ -1318,12 +1382,23 @@ class _Junctions:
     def free(self, r: _Run, e: int) -> bool:
         return not r.closed and (id(r), e) not in self.node_of
 
+    def _end_grid(self, ends: list[tuple[_Run, int]]) -> _Grid:
+        grid = _Grid()
+        for k, (r, e) in enumerate(ends):
+            grid.add(_box([r.end_point(e)]), k)
+        return grid
+
     def corners(self) -> None:
         ends = [(r, e) for r in self.runs if not r.closed for e in (0, 1)]
+        grid = self._end_grid(ends)
+        tmax = max((r.t for r in self.runs), default=0.0)
         cands = []
         for i, (r1, e1) in enumerate(ends):
             p1 = r1.end_point(e1)
-            for r2, e2 in ends[i + 1 :]:
+            for j in grid.query(_box([p1], 6.0 * (r1.t + tmax) + 2 * JUNCTION_TOL_MM)):
+                if j <= i:
+                    continue
+                r2, e2 = ends[j]
                 if r2 is r1:
                     continue
                 p2 = r2.end_point(e2)
@@ -1338,7 +1413,7 @@ class _Junctions:
                         continue
                     if (r1.b - r1.a) + l1 < r1.t or (r2.b - r2.a) + l2 < r2.t:
                         continue
-                    cands.append((abs(l1) + abs(l2), i, ends.index((r2, e2)), x))
+                    cands.append((abs(l1) + abs(l2), i, j, x))
         used: set[int] = set()
         for _, i, j, x in sorted(cands, key=lambda c: (c[0], c[1], c[2])):
             if i in used or j in used:
@@ -1351,8 +1426,12 @@ class _Junctions:
 
     def smooth(self) -> None:
         ends = [(r, e) for r in self.runs if not r.closed for e in (0, 1)]
+        grid = self._end_grid(ends)
         for i, (r1, e1) in enumerate(ends):
-            for r2, e2 in ends[i + 1 :]:
+            for j in grid.query(_box([r1.end_point(e1)], SMOOTH_MM)):
+                if j <= i:
+                    continue
+                r2, e2 = ends[j]
                 if r2 is r1 or not (self.free(r1, e1) and self.free(r2, e2)):
                     continue
                 if r1.frame.kind == "line" and r2.frame.kind == "line":
@@ -1375,6 +1454,10 @@ class _Junctions:
                 self._node([(r1, e1), (r2, e2)])
 
     def tees(self) -> None:
+        self.grid = _Grid()
+        tmax = max((r.t for r in self.runs), default=0.0)
+        for r in self.runs:
+            self.grid.add(r.bbox(6.0 * (r.t + tmax) + JUNCTION_TOL_MM + tmax), r)
         for _ in range(2):
             for r in self.runs:
                 for e in (0, 1):
@@ -1384,11 +1467,8 @@ class _Junctions:
     def _tee(self, r: _Run, e: int) -> None:
         p = r.end_point(e)
         best = None
-        for s in self.runs:
+        for s in self.grid.query(_box([p])):
             if s is r:
-                continue
-            x0, y0, x1, y1 = s.bbox(6.0 * (s.t + r.t) + JUNCTION_TOL_MM)
-            if not (x0 <= p[0] <= x1 and y0 <= p[1] <= y1):
                 continue
             for x in _intersections(r.frame, s.frame):
                 sin = _sin_at(r, s, x)
@@ -1481,15 +1561,15 @@ class _Inferrer:
         code = int(self.doc.header.get("$INSUNITS", 0) or 0)
         header = INSUNITS.get(code)
         info: dict[str, Any] = {"insunits": code, "header": header}
+        self.walls_pair = False
         if self.o.units != "auto":
             k = UNIT_MM[self.o.units]
             info.update(unit=self.o.units, scale_to_mm=k, source="units parameter")
             self.report["units"] = info
             return k
-        probe = [ln for ln in dwg.lines if ln.role == "wall"] or [
-            ln for ln in dwg.lines if ln.role not in ("ignore", "door", "window")
-        ]
-        faces = _fuse(probe)
+        walls = [ln for ln in dwg.lines if ln.role == "wall"]
+        probe = walls or [ln for ln in dwg.lines if ln.role not in ("ignore", "door", "window")]
+        faces = sorted(_fuse(probe), key=lambda f: -f.length)[:4000]  # the longest faces decide
         hk = UNIT_MM[header] if header else None
         evidence: dict[float, int] = {}
         for k in ([hk] if hk else []) + [s for s in SCALES if s != hk]:
@@ -1517,6 +1597,7 @@ class _Inferrer:
             k, source = (hk or 1.0), "$INSUNITS" if hk else "default"
         info.update(unit=name[k], scale_to_mm=k, source=source, face_pairs={name[s]: n for s, n in evidence.items()})
         self.report["units"] = info
+        self.walls_pair = bool(walls) and evidence[k] > 0
         return k
 
     def geometric_walls(self, dwg: _Drawing) -> None:
@@ -1524,7 +1605,10 @@ class _Inferrer:
         walls = [ln for ln in dwg.lines if ln.role == "wall"]
         if walls and self.how.get("wall") == "mapping":
             return
-        if walls and _pair_faces(_fuse(walls), self.o.thickness_min, self.o.thickness_max, self.o.min_overlap, False):
+        if walls and (
+            self.walls_pair
+            or _pair_faces(_fuse(walls), self.o.thickness_min, self.o.thickness_max, self.o.min_overlap, False)
+        ):
             return
         score: dict[str, float] = {}
         by_layer: dict[str, list[_Line]] = defaultdict(list)
@@ -1566,8 +1650,14 @@ class _Inferrer:
             and 250.0 <= a.r <= o.max_opening
         ]
         leaves = 0
+        swing_grid = _Grid()
+        for a in swings:
+            swing_grid.add(_box([a.c], JAMB_REACH_MM), a)
         for ln in dwg.lines:
-            if ln.role == "wall" and not ln.hatch and _is_leaf(ln, swings):
+            if ln.role != "wall" or ln.hatch:
+                continue
+            near = swing_grid.query(_box([ln.a, ln.b]))
+            if near and _is_leaf(ln, near):
                 ln.role = "door"
                 leaves += 1
         if leaves:
@@ -1600,7 +1690,10 @@ class _Inferrer:
             doors=_items(dwg.lines, dwg.arcs, "door"),
             windows=_items(dwg.lines, dwg.arcs, "window"),
             glass=loose,
-        )
+        ).index()
+        self.face_grid = _Grid()
+        for f in self.faces:
+            self.face_grid.add(_box([f.a, f.b]), f)
         groups: list[tuple[_Frame, list[list[float]], bool]] = []
         for frame, spans in _group_lines(pieces):
             groups.append((frame, _merge_spans(spans), False))
@@ -1630,7 +1723,8 @@ class _Inferrer:
                 if lo <= g0 + 1.0 and lo + f.sweep * frame.r >= g1 - 1.0:
                     return True
             return False
-        for f in self.faces:
+        box = _box([frame.point(g0, -half), frame.point(g0, half), frame.point(g1, -half), frame.point(g1, half)], 5.0)
+        for f in self.face_grid.query(box):
             if _angle_diff(f.phi, frame.phi) > ANGLE_TOL:
                 continue
             (sa, na), (sb, nb) = frame.local(f.a), frame.local(f.b)
@@ -1678,7 +1772,7 @@ class _Inferrer:
                     f"{_pt(frame.point((g0 + g1) / 2.0))}"
                 )
             elif width <= o.max_opening:
-                gap = _classify(frame, g0, g1, self.evidence)
+                gap = _classify(frame, g0, g1, self._near(frame, g0, g1))
                 if gap.kind:
                     join = "opening"
                 elif width <= o.gap_max:
@@ -1698,6 +1792,12 @@ class _Inferrer:
             if frame.kind == "arc":
                 run.frame = replace(frame, s_mid=(run.a + run.b) / 2.0)
         return out
+
+    def _near(self, frame: _Frame, g0: float, g1: float) -> _Evidence:
+        """The evidence that can explain a gap: within its width (a swing) of its footprint."""
+        reach = (g1 - g0) + frame.t + JAMB_REACH_MM
+        pts = [frame.point(g0), frame.point(g1), frame.point((g0 + g1) / 2.0)]
+        return self.evidence.near(_box(pts, reach))
 
     def _unclassified(self, frame: _Frame, gap: _Gap) -> None:
         policy = self.o.default_opening
@@ -1735,7 +1835,8 @@ class _Inferrer:
                 run.openings.append(_Gap(lo, hi, "window", evidence="lines inside the wall between its faces"))
             half = run.t / 2.0
             spans = []
-            for pts, name in self.evidence.windows:
+            near = self.evidence.near(run.bbox(run.t)).windows
+            for pts, name in near:
                 loc = [run.frame.local(p) for p in pts]
                 if max(abs(n) for _, n in loc) > half + FACE_TOL_MM:
                     continue
@@ -1771,8 +1872,9 @@ class _Inferrer:
                 if not j.free(r, e) or r.frame.kind != "line":
                     continue
                 p, d = r.end_point(e), r.out_dir(e)
+                ahead = j.grid.query(_box([p, _add(p, _mul(d, o.max_opening + o.thickness_max))], r.t))
                 best = None
-                for s in runs:
+                for s in ahead:
                     if s is r:
                         continue
                     for x in _intersections(r.frame, s.frame):
@@ -1792,9 +1894,9 @@ class _Inferrer:
                 g0 = r.s_end(e)
                 g1 = g0 + face if e == 1 else g0 - face
                 lo, hi = min(g0, g1), max(g0, g1)
-                if any(t is not r and t is not s and self._blocks(t, r, p, d, face) for t in runs):
+                if any(t is not r and t is not s and self._blocks(t, r, p, d, face) for t in ahead):
                     continue
-                gap = _classify(r.frame, lo, hi, self.evidence)
+                gap = _classify(r.frame, lo, hi, self._near(r.frame, lo, hi))
                 if not gap.kind:
                     if face > o.gap_max:
                         continue
@@ -2444,7 +2546,7 @@ class _Inferrer:
                 f"{len(free_ends)} wall ends join nothing (a stub, or a missed junction): "
                 + ", ".join(str(p) for p in free_ends[:LIST_MAX])
             )
-        unused = [a for k, a in enumerate(self.evidence.arcs) if k not in self.evidence.used_arcs and a.role == "door"]
+        unused = [a for a in self.evidence.arcs if id(a) not in self.evidence.used_arcs and a.role == "door"]
         rep["unmatched_evidence"] = [
             {"what": "door swing arc", "centre": _pt(a.c), "radius": _r(a.r), "layer": a.block or a.layer}
             for a in unused[:LIST_MAX]
