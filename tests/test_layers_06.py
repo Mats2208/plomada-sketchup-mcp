@@ -546,6 +546,16 @@ def test_a_dwg_is_read_through_the_oda_file_converter(tmp_path, monkeypatch):
     assert Path(out_dir).name.startswith(cadfile.TEMP_PREFIX) and not Path(out_dir).exists()  # removed after reading
 
 
+def test_the_newest_oda_install_wins_by_version_not_by_name(monkeypatch):
+    names = ["ODAFileConverter 9.12.0", "ODAFileConverter 25.4.0", "ODAFileConverter 25.12.0", "ODAFileConverter"]
+    found = [rf"C:\Program Files\ODA\{n}\ODAFileConverter.exe" for n in names]
+    monkeypatch.delenv("PLOMADA_ODA", raising=False)
+    monkeypatch.setattr(cadfile.glob, "glob", lambda pattern: sorted(found))  # 9.12 sorts last by name
+    assert cadfile.find_oda() == Path(found[2])
+    monkeypatch.setattr(cadfile.glob, "glob", lambda pattern: [])
+    assert cadfile.find_oda() is None
+
+
 def test_a_dwg_falls_back_to_libredwg_and_else_names_both_converters(tmp_path, monkeypatch):
     dwg = tmp_path / "casa.dwg"
     dwg.write_bytes(b"AC1032 fake")

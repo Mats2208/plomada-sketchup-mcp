@@ -32,7 +32,7 @@ def test_write_plan_dxf_writes_a_file_that_reads_back_exactly(run, tmp_path):
     tool, result = run(_session(fake, tmp_path, body))
     assert not result.is_error, _text(result)
     assert tool.annotations.read_only_hint is False and tool.annotations.open_world_hint is False
-    assert tool.annotations.destructive_hint is True and tool.annotations.idempotent_hint is True
+    assert tool.annotations.destructive_hint is True and tool.annotations.idempotent_hint is False  # open=true
     out = result.structured_content
     assert out["path"] == str(path) and out["records"] == 30 and "PLOMADA-LOSA" in out["layers"]
     assert out["entities"] > out["records"]

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,15 +38,21 @@ HELP = (
 )
 
 
+def _version(exe: str) -> tuple[int, ...]:
+    """The version numbers in an install folder's name: "ODAFileConverter 25.12.0" is (25, 12, 0)."""
+    return tuple(int(n) for n in re.findall(r"\d+", Path(exe).parent.name))
+
+
 def find_oda() -> Path | None:
     """The ODA File Converter: PLOMADA_ODA (an .exe or the folder holding it), else the newest install under
-    C:\\Program Files\\ODA; None when there is none."""
+    C:\\Program Files\\ODA by the version in its folder name, compared as numbers (25.12 is newer than 9.12 and
+    25.4); None when there is none."""
     env = os.environ.get("PLOMADA_ODA")
     if env:
         p = Path(env)
         p = p / ODA_EXE if p.is_dir() else p
         return p if p.is_file() else None
-    found = sorted(glob.glob(ODA_GLOB))
+    found = sorted(glob.glob(ODA_GLOB), key=lambda exe: (_version(exe), exe))
     return Path(found[-1]) if found else None
 
 

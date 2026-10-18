@@ -756,7 +756,7 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
 
     # --- scenes and exports -----------------------------------------------------------------
 
-    @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
+    @mcp.tool(annotations=_mut(destructive=True, idempotent=False))  # open=true launches the app on every call
     @exact_errors
     async def write_plan_dxf(
         plan: Annotated[PlanInput, Field(description="the plan build_plan takes, in mm")],

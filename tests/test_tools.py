@@ -52,8 +52,10 @@ def test_tool_list_and_annotations(run, tmp_path):
     for name in ("build_from_autocad", "reset_plomada", "undo", "execute_ruby"):
         assert tools[name].annotations.read_only_hint is False
         assert tools[name].annotations.destructive_hint is True
-    for name in ("set_slab", "write_plan_dxf"):  # replace a slab or overwrite a file: the same call, the same result
-        assert tools[name].annotations.read_only_hint is False and tools[name].annotations.idempotent_hint is True
+    assert tools["set_slab"].annotations.read_only_hint is False  # replace a slab: the same call, the same result
+    assert tools["set_slab"].annotations.idempotent_hint is True
+    assert tools["write_plan_dxf"].annotations.read_only_hint is False  # open=true launches the app on every call
+    assert tools["write_plan_dxf"].annotations.idempotent_hint is False
     props = tools["build_from_autocad"].input_schema["properties"]
     assert props["storey_height"]["default"] == 2800.0 and "mm" in props["storey_height"]["description"]
     assert props["roof"]["enum"] == ["flat", "gable", "hip", "none"]
