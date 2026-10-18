@@ -278,3 +278,15 @@ def test_preview_leaves_out_what_does_not_plot():
     doc.modelspace().add_line((0, 0), (1, 1), dxfattribs={"layer": "DATOS"})
     with pytest.raises(preview.PreviewError, match="the drawing has nothing to plot"):
         preview.render(doc)
+
+
+@pytest.mark.parametrize("hide", ["off", "freeze"])
+def test_preview_fits_the_page_to_what_is_drawn_not_to_off_or_frozen_layers(hide):
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    for i in range(10):
+        msp.add_line((0, i * 500), (5000, i * 500))  # 5000 x 4500: a page wider than tall
+    getattr(doc.layers.add("OCULTA"), hide)()
+    msp.add_line((1e6, 1e6), (1e6 + 10, 1e6), dxfattribs={"layer": "OCULTA"})  # ezdxf does not draw it
+    _, w, h = preview.render(doc, 800)
+    assert h == pytest.approx(w * 4500 / 5000, rel=0.05)

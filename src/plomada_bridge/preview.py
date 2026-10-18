@@ -26,8 +26,10 @@ class PreviewError(RuntimeError):
 
 
 def _plots(doc: Drawing, entity: Any) -> bool:
+    """True when the entity's layer plots and is on and thawed: the extents fit the page to what ezdxf
+    draws, and ezdxf skips off and frozen layers on its own."""
     layer = doc.layers.get(entity.dxf.layer) if doc.layers.has_entry(entity.dxf.layer) else None
-    return layer is None or layer.dxf.get("plot", 1) != 0
+    return layer is None or (layer.dxf.get("plot", 1) != 0 and not layer.is_off() and not layer.is_frozen())
 
 
 def render(doc: Drawing, width_px: int = 1600) -> tuple[bytes, int, int]:
