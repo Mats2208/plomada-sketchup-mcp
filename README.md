@@ -33,7 +33,7 @@ deck, paving and fence, and 21 site objects in 14 s.</sub>
 <td align="center"><strong>5</strong><br/><sub>ways in, one builder</sub></td>
 <td align="center"><strong>0.91 s</strong><br/><sub>DXF to finished house (p50)</sub></td>
 <td align="center"><strong>31</strong><br/><sub>MCP tools</sub></td>
-<td align="center"><strong>375</strong><br/><sub>tests, no SketchUp needed</sub></td>
+<td align="center"><strong>390</strong><br/><sub>tests, no SketchUp needed</sub></td>
 <td align="center"><strong>0</strong><br/><sub>booleans, internal faces</sub></td>
 </tr>
 </table>
@@ -425,7 +425,7 @@ source.
 
 | | Transport | Auth | Ruby eval by default | Architecture tools | Needs booleans | Tests |
 |---|---|---|---|---|---|---|
-| **Plomada** | Length-prefixed JSON-RPC on loopback TCP, UI-timer pump, stdio bridge | 64-hex token, constant-time compare, required | Off | Plan in: curved walls, openings (arched too), carpentry, curtain walls, columns, storeys at any level, stairs, slab records with bands, railings, planters, pools, ramps, flat/gable/hip roofs, furniture from a model library, site, terrain, rooms, automatic scenes, 2D drawings, plan to DXF/DWG; reads any CAD through a layer standard and infers ordinary drawings | No | 208 minitest + 167 pytest, live e2e, bench |
+| **Plomada** | Length-prefixed JSON-RPC on loopback TCP, UI-timer pump, stdio bridge | 64-hex token, constant-time compare, required | Off | Plan in: curved walls, openings (arched too), carpentry, curtain walls, columns, storeys at any level, stairs, slab records with bands, railings, planters, pools, ramps, flat/gable/hip roofs, furniture from a model library, site, terrain, rooms, automatic scenes, 2D drawings, plan to DXF/DWG; reads any CAD through a layer standard and infers ordinary drawings | No | 208 minitest + 182 pytest, live e2e, bench |
 | [Tarkiin/SketchUp-MCP](https://github.com/Tarkiin/SketchUp-MCP) | HTTP on 127.0.0.1:8080, served by Ruby threads, `Access-Control-Allow-Origin: *` | None | On | Primitives and `create_roof_truss` | No | None |
 | [zinin/sketchup-mcp2](https://github.com/zinin/sketchup-mcp2) | Length-prefixed JSON-RPC on TCP, UI-timer pump, stdio bridge | None (loopback default) | On (`eval_enabled: true`) | Woodworking joints | Yes (`Group#subtract`) | Ruby minitest + Python |
 | [PMajesty/sk_ruby_mcp](https://github.com/PMajesty/sk_ruby_mcp) | Streamable HTTP inside SketchUp, Host/Origin guard, no bridge | Optional, empty by default | On | Massing boxes, façade openings as glued components | No | Ruby test suite + soak scripts |
@@ -467,7 +467,7 @@ source.
 ## Development
 
 ```powershell
-uv run pytest                     # bridge: DXF, layers, inference, writer, models, socket, MCP tools (167 tests)
+uv run pytest                     # bridge: DXF, layers, inference, writer, models, socket, MCP tools (182 tests)
 ruby -Itest test/run_all.rb       # extension: geometry, plan, pump (208 tests, Ruby 3.2, no SketchUp)
 uv run ruff check . ; uv run ruff format --check .
 uv run python scripts/e2e_house.py        # live: needs SketchUp with the extension
