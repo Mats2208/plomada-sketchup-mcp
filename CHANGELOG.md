@@ -328,8 +328,10 @@ First release. The SketchUp extension and the Python bridge version together.
 - PBR is detected through `Sketchup::Material#metallic_factor=`, the method SketchUp 2025 actually has, not through
   `metalness=`.
 
-[0.4.0]: https://github.com/Mats2208/plomada-mcp/releases/tag/v0.4.0
-[0.3.0]: https://github.com/Mats2208/plomada-mcp/releases/tag/v0.3.0
-[0.2.0]: https://github.com/Mats2208/plomada-mcp/releases/tag/v0.2.0
-[0.1.1]: https://github.com/Mats2208/plomada-mcp/releases/tag/v0.1.1
-[0.1.0]: https://github.com/Mats2208/plomada-mcp/releases/tag/v0.1.0
+[0.6.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.6.0
+[0.5.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.5.0
+[0.4.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.4.0
+[0.3.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.2.0
+[0.1.1]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.1.1
+[0.1.0]: https://github.com/Mats2208/plomada-sketchup-mcp/releases/tag/v0.1.0

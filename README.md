@@ -10,13 +10,13 @@
 
 **The plan can come from any AutoCAD MCP, an architect's DWG, a photo of a sketch, or a single prompt.**
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue?style=flat-square)](https://github.com/Mats2208/plomada-mcp/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/Mats2208/plomada-mcp/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/Mats2208/plomada-mcp/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue?style=flat-square)](https://github.com/Mats2208/plomada-sketchup-mcp/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/Mats2208/plomada-sketchup-mcp/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/Mats2208/plomada-sketchup-mcp/actions/workflows/ci.yml)
 [![SketchUp](https://img.shields.io/badge/SketchUp-2025%20Pro-005F9E?style=flat-square)](https://www.sketchup.com)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-00B4D8?style=flat-square)](https://modelcontextprotocol.io)
 [![Skill](https://img.shields.io/badge/agent%20skill-included-8A2BE2?style=flat-square)](skill/SKILL.md)
-[![License](https://img.shields.io/github/license/Mats2208/plomada-mcp?style=flat-square&color=green)](LICENSE)
+[![License](https://img.shields.io/github/license/Mats2208/plomada-sketchup-mcp?style=flat-square&color=green)](LICENSE)
 
 <br/>
 
@@ -233,7 +233,7 @@ You need Windows 11, SketchUp 2025 Pro, [uv](https://docs.astral.sh/uv/) 0.11.25
 detection but were not run here.
 
 ```powershell
-git clone https://github.com/Mats2208/plomada-mcp C:\mcp\plomada-mcp
+git clone https://github.com/Mats2208/plomada-sketchup-mcp C:\mcp\plomada-mcp
 cd C:\mcp\plomada-mcp
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
@@ -243,7 +243,7 @@ The script copies `plomada.rb` and `plomada\` into the SketchUp Plugins folder a
 It registers `plomada-mcp` for Claude Code with `claude mcp add -s user sketchup`. It also offers, y/n, to move the old
 Tarkiin plugin out of the Plugins folder. Restart SketchUp, reconnect the MCP, and call `status`.
 
-To install by hand instead, add [`plomada-0.6.0.rbz`](https://github.com/Mats2208/plomada-mcp/releases) through
+To install by hand instead, add [`plomada-0.6.0.rbz`](https://github.com/Mats2208/plomada-sketchup-mcp/releases) through
 **Extensions > Extension Manager > Install Extension**, then register `.venv\Scripts\plomada-mcp.exe` as a stdio server.
 
 Optional:

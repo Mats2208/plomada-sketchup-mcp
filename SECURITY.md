@@ -50,4 +50,4 @@ The only socket is the loopback one above. Plomada makes no outbound connections
 ## Reporting a vulnerability
 
 Open a private security advisory on the repository:
-<https://github.com/Mats2208/plomada-mcp/security/advisories/new>.
+<https://github.com/Mats2208/plomada-sketchup-mcp/security/advisories/new>.
