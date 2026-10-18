@@ -8,8 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 CURVAS. One plan, written once, now builds a non-orthogonal building: curved walls with real openings, a curved slab
 edge on every storey with cantilevered balconies and their bands, glass railings, planters, round columns, curtain
-walls, arches, pools on any storey, ramps, a basement and free storey heights. The proof is a real student project,
-a student's hotel project, rebuilt from a DXF of it.
+walls, arches, pools on any storey, ramps, a basement and free storey heights.
 
 ### Added
 
@@ -39,8 +38,6 @@ a student's hotel project, rebuilt from a DXF of it.
 - **An isolated development SketchUp.** `PLOMADA_DEV_DIR` loads the extension from a checkout, `PLOMADA_PORT`
   overrides the port for one process without touching the stored one, `scripts/sketchup-dev.cmd` starts it on 7884
   with its own token folder; `scripts/dev.py`, `dev_restart.ps1` and `dev_open.ps1` drive it.
-- **The hotel benchmark** (kept private): measures the DXF read-only, writes one PlanInput per storey, settles the
-  walls against the solver, builds the six storeys and compares them with the drawing and the hand-made model.
 
 ### Changed
 
@@ -60,9 +57,6 @@ a student's hotel project, rebuilt from a DXF of it.
 
 ### Measured
 
-- **a student's hotel project**, six storeys through the MCP tools: 20 of 20 features of the brief
-  expressible, slab IoU 0.9999 or better on every storey against the linework, the ten largest rooms within 2.54 %
-  of the drawing's, every wall group manifold with no internal face, **33.8 s** for the building and 0.2 s for the terrain.
 - **0.4 unchanged.** The solver gives byte-identical output for all six 0.4 fixtures, and `casa_completa_N00.dxf`
   built in SketchUp by 0.4.0 and by 0.5 has 858 faces and the same bounding box in both.
 - **Live curves.** A quarter-circle wall of R 2000 with a 1500 mm window: 44 faces, manifold, two panels; the 0.5
