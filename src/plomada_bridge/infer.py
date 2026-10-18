@@ -697,9 +697,19 @@ def _fused(group: list[_Line]) -> _Face:
 
 
 def _fuse_arcs(arcs: list[_Arc]) -> list[_ArcFace]:
+    """Arcs on one circle (centre and radius within FUSE_MM of a face's) that overlap or touch, fused into arc
+    faces. A grid of FUSE_MM cells over centre and radius holds the faces: an arc tries only the faces of its
+    neighbouring cells, in the order they were made, so the fusing is linear in the arcs."""
     out: list[_ArcFace] = []
+    grid: dict[tuple[int, int, int], list[int]] = defaultdict(list)
     for arc in sorted(arcs, key=lambda a: (round(a.c[0], 1), round(a.c[1], 1), round(a.r, 1), a.t0)):
-        for f in out:
+        cell = (math.floor(arc.c[0] / FUSE_MM), math.floor(arc.c[1] / FUSE_MM), math.floor(arc.r / FUSE_MM))
+        near = sorted(
+            i
+            for dx, dy, dr in itertools.product((-1, 0, 1), repeat=3)
+            for i in grid.get((cell[0] + dx, cell[1] + dy, cell[2] + dr), ())
+        )
+        for f in (out[i] for i in near):
             if math.dist(f.c, arc.c) <= FUSE_MM and abs(f.r - arc.r) <= FUSE_MM:
                 rel = (arc.t0 - f.t0) % math.tau
                 if f.sweep >= math.tau - 1e-9:
@@ -716,6 +726,7 @@ def _fuse_arcs(arcs: list[_Arc]) -> list[_ArcFace]:
                     f.members.append(arc)
                     break
         else:
+            grid[cell].append(len(out))
             out.append(_ArcFace(arc.c, arc.r, arc.t0, arc.sweep, [arc]))
     return out
 

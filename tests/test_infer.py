@@ -8,6 +8,7 @@ import math
 import random
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import ezdxf
@@ -19,7 +20,7 @@ from conftest import FIXTURES, FakeExtension, broken_dxfs, make_config
 from drafter import Drafter, Seg, Style, draft
 from plomada_bridge import cadfile
 from plomada_bridge.dxf import read_plan
-from plomada_bridge.infer import InferError, InferOptions, LayerRoles, infer_plan
+from plomada_bridge.infer import InferError, InferOptions, LayerRoles, _Arc, _fuse_arcs, infer_plan
 from plomada_bridge.models import Plan, parse_plan
 from plomada_bridge.server import Bridge, create_server
 
@@ -186,6 +187,19 @@ def test_a_curved_wall_from_concentric_arcs(tmp_path):
     assert ext.axis[0] == (0.0, 0.0, -0.4)
     windows = [o for o in res.plan.openings if o.opening_kind == "window"]
     assert sorted((o.offset, o.width) for o in windows) == [(1500.0, 1500.0), (7500.0, 1500.0)]
+
+
+def test_arcs_on_one_circle_fuse_and_thousands_of_circles_fuse_in_linear_time():
+    q = math.pi / 2
+    pieces = [_Arc((5000.0, 0.1 * k), 3000.0 + 0.1 * k, k * q, q, "MUROS") for k in range(4)]  # within FUSE_MM
+    near = _Arc((5000.0, 0.0), 3000.3, 0.0, q, "MUROS")
+    other = _Arc((5000.0, 0.0), 3001.0, 0.0, q, "MUROS")  # 1 mm out: its own face
+    faces = _fuse_arcs([other, *pieces[::-1], near])
+    assert sorted((len(f.members), round(f.sweep, 9)) for f in faces) == [(1, round(q, 9)), (5, round(math.tau, 9))]
+    many = [_Arc(((i % 100) * 700.0, (i // 100) * 700.0), 100.0 + i % 7, 0.0, math.tau, "MUROS") for i in range(20000)]
+    start = time.perf_counter()
+    assert len(_fuse_arcs(many)) == 20000
+    assert time.perf_counter() - start < 2.0  # quadratic, this took 10 s
 
 
 def test_walls_of_two_thicknesses_end_to_end_and_an_x_crossing(tmp_path):
