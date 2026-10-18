@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+0.6.0, ANY CAD. A plan no longer has to come from AutoCAD MCP Pro: any CAD or AutoCAD MCP that draws lines,
+arcs, polylines, text and blocks on named layers hands Plomada the exact building, and what Plomada writes is a
+drawing a person reads in AutoCAD.
+
+### Added
+
+- **The PLOMADA-* layer standard** ([docs/drawing-standard.md](docs/drawing-standard.md)), read with no XDATA:
+  walls as LINE, ARC, CIRCLE, LWPOLYLINE, 2D POLYLINE, SPLINE or ELLIPSE on `PLOMADA-MURO-<t>` (LINE and ARC pieces
+  chained through nodes of exactly two ends within 1 mm, a loop closing the wall); doors and windows drawn from jamb
+  to jamb on the host axis on `PLOMADA-PUERTA[-<h>]` and `PLOMADA-VENTANA[-<sill>-<h>]`, hosted on any wall source,
+  offset and width measured along the axis (arc length on arcs); rooms from TEXT or MTEXT on `PLOMADA-AMBIENTE` with
+  an optional `12.5 m2` line; straight stairs as a line up the run on `PLOMADA-ESCALERA-<w>`, risers derived from
+  floor to floor; furniture as any block on `PLOMADA-MUEBLE`. English aliases for every layer (`PLOMADA-WALL-200`,
+  `PLOMADA-DOOR`, `PLOMADA-SLAB`...). `PLOMADA` payloads of kind `opening`, `room` and `stair` fill in what a layer
+  cannot say. An opening on no wall or on two, or across a closed wall's first vertex, is refused naming its handle.
+- **Units.** `build_from_autocad` and `read_plan` take `units` (`auto`, `mm`, `cm`, `m`, `in`, `ft`); `auto` follows
+  `$INSUNITS` for drawings without records and reports the unit read. Numbers in layer names are always mm.
+- **DWG in and out** through the ODA File Converter (`PLOMADA_ODA`) or LibreDWG, with a refusal naming both when
+  neither is installed.
+- **`write_plan_dxf` draws.** Style `drawing` (the default) adds the documentation on AIA-style layers over the same
+  records: wall faces with real arcs, mitred, cut at openings, trimmed at tees, with a solid poché; door leaves and
+  swing arcs; window lines; room names and areas; stair flights with nosings and an arrow; hatched columns. The data
+  layers turn grey and stop plotting. Style `layers` writes the plan in the layer standard alone and returns `lost`,
+  every field the standard did not carry, after reading the file back. `format="dwg"` and `open=true` (the file
+  opens in AutoCAD without any AutoCAD MCP).
+- **New tool `preview_plan`** (read-only): a PNG under 350 KB of a plan or of a DXF or DWG as it plots, without
+  SketchUp, through ezdxf's drawing add-on on PyMuPDF (new dependencies `pymupdf` and `pillow`).
+
+### Changed
+
+- The refusal for a drawing with nothing readable names the three routes and the standard.
+- `$INSUNITS` inches and feet must be confirmed with `units` (AutoCAD's imperial template declares inches over
+  drawings made in mm), and metres that would make the walls span more than 1 km are read as mm with a
+  `units_note` (ezdxf's and AutoCAD MCP Pro's default header). Drawings with records stay millimetres, as their
+  records are: the 0.4 and 0.5 fixtures read byte for byte as before.
+- An entity on an unknown `PLOMADA-*` layer, or of a type its layer does not take, is skipped with a warning.
+
+### Fixed
+
+- `write_plan` drew both faces of a centred arc wall at r - t/2; the outer face is at r + t/2.
+
 ## [0.5.0] - 2026-10-17
 
 CURVAS. One plan, written once, now builds a non-orthogonal building: curved walls with real openings, a curved slab
