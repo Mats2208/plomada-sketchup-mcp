@@ -29,6 +29,7 @@ from .connection import SketchUpClient
 from .dxf import DxfPlanError, read_plan
 from .dxfwrite import build_doc, write_plan
 from .errors import NOT_RESPONDING, BridgeError, NotResponding, describe
+from .infer import InferError, InferOptions, LayerRoles, infer_plan
 from .models import (
     ELEVATION_MAX_MM,
     ELEVATION_MIN_MM,
@@ -82,6 +83,9 @@ positive counter-clockwise, at most 1. Plans also hold slabs, columns, curtain_w
 pools, ramps and arched openings; elevation puts a storey at any height (SS below 0), ground_level_mm sets
 the ground. Route: author PlanInput JSON once -> build_plan -> write_plan_dxf (open=true lands it in
 AutoCAD); preview_plan shows a plan or a DXF as a PNG without SketchUp.
+An ordinary drawing (an architect's DXF or DWG: walls as parallel lines, doors as leaf and arc, rooms as
+text) goes through plan_from_dxf, which returns a DRAFT plan and a report: review it, fix the plan, tell
+the user what was assumed, then build_plan. plan_from_dxf, write_plan_dxf and preview_plan need no SketchUp.
 If a mutating call times out or the connection drops, its outcome is unknown: call get_plan or
 status before retrying. execute_ruby is off unless the user enables it in SketchUp.
 """
@@ -366,6 +370,64 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
     async def job_status() -> dict[str, Any]:
         """The running job (id, method, progress), queued jobs, and the last finished jobs."""
         return await b.read("job_status", "job_status")
+
+    @mcp.tool(annotations=READ)
+    @exact_errors
+    async def plan_from_dxf(
+        path: Annotated[str, Field(min_length=1, description="an ordinary architectural DXF: linework, no records")],
+        layers: Annotated[
+            LayerRoles | None,
+            Field(
+                description="layers per role, case-insensitive, * wildcards: walls, doors, windows, rooms, ignore; "
+                "a role left out is found by layer name (MURO, WALL, PUERTA, DOOR, VENTANA, WINDOW, TEXTO, ROOM...)"
+            ),
+        ] = None,
+        units: Annotated[
+            Literal["auto", "mm", "cm", "dm", "m", "in", "ft"],
+            Field(
+                description="drawing units; auto reads $INSUNITS and overrules it when the walls only pair in another"
+            ),
+        ] = "auto",
+        thickness_min: Annotated[float, Field(ge=10, le=1_000, description="thinnest wall, mm")] = 60.0,
+        thickness_max: Annotated[float, Field(ge=20, le=2_000, description="thickest wall, mm")] = 600.0,
+        default_opening: Annotated[
+            Literal["door", "window", "skip"],
+            Field(description="what an empty gap in a wall (nothing drawn in it) becomes; skip leaves the gap open"),
+        ] = "skip",
+        door_height: Annotated[float, Field(gt=0, le=10_000, description="mm, every inferred door")] = 2100.0,
+        window_sill: Annotated[float, Field(ge=0, le=10_000, description="mm, every inferred window")] = 900.0,
+        window_height: Annotated[float, Field(gt=0, le=10_000, description="mm, every inferred window")] = 1200.0,
+    ) -> dict[str, Any]:
+        """Infers a DRAFT plan from an ordinary architectural DXF (an architect's drawing or any AutoCAD
+        linework: walls as parallel lines, outlines or hatches, doors as leaf and swing arc or blocks, windows
+        as lines across a gap or blocks, room names as text). Returns {"plan": the PlanInput build_plan takes,
+        "report": layers used, units, per-wall paired_pct, unclassified_gaps, dropped pieces, unpaired lines,
+        issues, assumptions and a verdict}. Read the report, fix the plan (heights, sills, materials and every
+        listed gap or issue), then call build_plan; never build a plan with unresolved report items without
+        telling the user. A DXF with ACADMCP_ARCH or PLOMADA records goes to build_from_autocad instead. Reads
+        the file only; SketchUp is not involved."""
+        if thickness_min >= thickness_max:
+            raise ToolError(
+                f"plan_from_dxf refused its input (-32004): thickness_min {thickness_min:g} must be below "
+                f"thickness_max {thickness_max:g}. Fix it and call again."
+            )
+        opts = InferOptions(
+            units=units,
+            layers=layers,
+            thickness_min=thickness_min,
+            thickness_max=thickness_max,
+            default_opening=default_opening,
+            door_height=door_height,
+            window_sill=window_sill,
+            window_height=window_height,
+        )
+        try:
+            result = await asyncio.to_thread(infer_plan, path, opts)
+        except InferError as exc:
+            raise ToolError(
+                f"plan_from_dxf refused its input (-32004): {exc}. Fix the DXF or the call and try again."
+            ) from None
+        return result.wire()
 
     # --- the flagship -----------------------------------------------------------------------
 

@@ -8,7 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 0.6.0, ANY CAD. A plan no longer has to come from AutoCAD MCP Pro: any CAD or AutoCAD MCP that draws lines,
 arcs, polylines, text and blocks on named layers hands Plomada the exact building, and what Plomada writes is a
-drawing a person reads in AutoCAD.
+drawing a person reads in AutoCAD. And a drawing made without Plomada in mind becomes a draft
+plan with `plan_from_dxf`.
 
 ### Added
 
@@ -33,6 +34,16 @@ drawing a person reads in AutoCAD.
   opens in AutoCAD without any AutoCAD MCP).
 - **New tool `preview_plan`** (read-only): a PNG under 350 KB of a plan or of a DXF or DWG as it plots, without
   SketchUp, through ezdxf's drawing add-on on PyMuPDF (new dependencies `pymupdf` and `pillow`).
+- **`plan_from_dxf`: a draft plan from an ordinary DXF.** An architect's drawing, or linework from any
+  AutoCAD MCP, with no ACADMCP_ARCH or PLOMADA records: walls as parallel lines, closed outlines or
+  hatches (blocks exploded, units checked against the walls), doors as a leaf and a swing arc or a block,
+  windows as lines across a gap or a block, rooms as TEXT with their area. Faces pair when they are
+  parallel, mutually nearest and longer than they are apart; runs are joined into L corners, T stems and
+  chained polylines the solver accepts; gaps become doors, windows or reported unclassified gaps. The tool
+  is read-only and returns the plan with a report (layers used, units, per-wall paired share, unclassified
+  gaps, dropped pieces, unpaired lines, issues, assumptions, a verdict) for the agent to review before
+  `build_plan`. The four AutoCAD MCP Pro fixtures, read without their records, match them exactly (walls
+  and openings recall and precision 1.000). See [docs/infer.md](docs/infer.md).
 
 ### Changed
 
