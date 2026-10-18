@@ -82,6 +82,7 @@ ANGLE_TOL = math.radians(1.0)  # face lines this close in direction are parallel
 DRIFT_MM = 3.0  # paired faces may diverge this much over their overlap
 FUSE_ANGLE = math.radians(0.1)  # collinear wall lines that fuse into one face
 FUSE_MM = 0.5
+FLATTEN_MM = 5.0  # largest sagitta of a flattened SPLINE or ELLIPSE
 CENTRE_TOL_MM = 2.0  # concentric arcs
 AXIS_ANGLE = math.radians(1.0)  # pieces on one axis line
 AXIS_TOL_MM = 5.0
@@ -336,6 +337,7 @@ class _Drawing:
     lines: list[_Line] = field(default_factory=list)
     arcs: list[_Arc] = field(default_factory=list)
     texts: list[_Text] = field(default_factory=list)
+    curves: list[tuple[Any, str, str | None, str | None]] = field(default_factory=list)  # (entity, layer, block, role)
     skipped: Counter[str] = field(default_factory=Counter)
     blocks: Counter[str] = field(default_factory=Counter)
     layers: Counter[str] = field(default_factory=Counter)
@@ -406,7 +408,8 @@ def _bulge_arc(a: Vec, b: Vec, bulge: float) -> tuple[Vec, float, float, float]:
 
 
 class _Reader:
-    """Model space as lines, arcs and texts in drawing units, blocks exploded."""
+    """Model space as lines, arcs and texts in drawing units, blocks exploded; a SPLINE or an ELLIPSE that is
+    not a circle is kept whole in curves, flattened once the unit is known (_Inferrer.flatten)."""
 
     def __init__(self) -> None:
         self.out = _Drawing()
@@ -524,13 +527,9 @@ class _Reader:
                 c = e.dxf.center
                 self.arc((float(c.x), float(c.y)), r, rot + float(e.dxf.start_param), sweep, layer, block, brole)
             else:
-                pts = [(p.x, p.y) for p in e.flattening(5.0)]
-                for p, q in itertools.pairwise(pts):
-                    self.line(p, q, layer, block, brole)
+                self.out.curves.append((e, layer, block, brole))
         elif kind == "SPLINE":
-            pts = [(p.x, p.y) for p in e.flattening(5.0)]
-            for p, q in itertools.pairwise(pts):
-                self.line(p, q, layer, block, brole)
+            self.out.curves.append((e, layer, block, brole))
         elif kind == "HATCH":
             self.hatch(e, layer, block, brole)
         elif kind in ("SOLID", "TRACE"):
@@ -1605,6 +1604,16 @@ class _Inferrer:
         self.walls_pair = bool(walls) and evidence[k] > 0
         return k
 
+    def flatten(self, dwg: _Drawing, k: float) -> None:
+        """The SPLINEs and ELLIPSEs as lines in mm within FLATTEN_MM (FLATTEN_MM / k drawing units), with the
+        role of their layer and block. They take no part in the unit probe."""
+        for e, layer, block, brole in dwg.curves:
+            pts = [_mul((p.x, p.y), k) for p in e.flattening(FLATTEN_MM / k)]
+            role = _effective_role(self.layer_role.get(layer.upper(), "other"), brole)
+            for p, q in itertools.pairwise(pts):
+                if math.dist(p, q) > 1e-9:
+                    dwg.lines.append(_Line(p, q, layer, block, brole, role=role))
+
     def geometric_walls(self, dwg: _Drawing) -> None:
         """No wall layer by name or mapping (or none of them pairs): the layers whose lines pair are walls."""
         walls = [ln for ln in dwg.lines if ln.role == "wall"]
@@ -2473,6 +2482,7 @@ class _Inferrer:
         self.roles(dwg)
         k = self.units(dwg)
         dwg.scale(k)
+        self.flatten(dwg, k)
         self.geometric_walls(dwg)
         by_role: dict[str, list[str]] = defaultdict(list)
         for layer in sorted(dwg.layers):

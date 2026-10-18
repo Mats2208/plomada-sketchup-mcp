@@ -386,7 +386,7 @@ def vertices(entity: Any, scale: float = 1.0) -> tuple[list[list[float]], bool]:
     """The entity as [x, y] / [x, y, bulge] WCS vertices in mm and its closed flag: an LWPOLYLINE or 2D
     POLYLINE (drawn in its OCS, _in_wcs) with its bulges, zeros dropped, a 3D POLYLINE, a LINE, an ARC with
     its bulge, a CIRCLE as a ring of two half circles, a SPLINE or ELLIPSE flattened to straight vertices
-    within FLATTEN_MM."""
+    within FLATTEN_MM (mm: FLATTEN_MM / scale drawing units)."""
     kind = entity.dxftype()
     if kind == "LWPOLYLINE":
         z = float(entity.dxf.elevation)
@@ -417,7 +417,7 @@ def vertices(entity: Any, scale: float = 1.0) -> tuple[list[list[float]], bool]:
             closed = bool(entity.closed)
         else:
             closed = math.isclose(abs(entity.dxf.end_param - entity.dxf.start_param), math.tau, abs_tol=1e-9)
-        pts = [[float(p.x), float(p.y)] for p in entity.flattening(FLATTEN_MM)]
+        pts = [[float(p.x), float(p.y)] for p in entity.flattening(FLATTEN_MM / scale)]
         if len(pts) > 2 and math.dist(pts[0], pts[-1]) <= 1e-6:
             pts.pop()
             closed = True

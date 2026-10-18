@@ -233,6 +233,24 @@ def test_thin_walls_pair_in_the_unit_they_are_drawn_in(tmp_path, k, insunits, un
     _assert_same(gt, infer_plan(draft(gt, tmp_path / "box.dxf", faces="outlines", scale=k, insunits=insunits)).plan)
 
 
+def test_ellipses_and_splines_flatten_within_5_mm_whatever_the_drawing_unit(tmp_path):
+    reports = []
+    for insunits, k in ((4, 1.0), (6, 0.001)):
+        path = draft(plans.box(), tmp_path / f"curvas{insunits}.dxf", faces="outlines", scale=k, insunits=insunits)
+        doc = ezdxf.readfile(path)
+        msp = doc.modelspace()
+        msp.add_ellipse((4500 * k, 3500 * k), major_axis=(2000 * k, 0), ratio=0.5, dxfattribs={"layer": "MUROS"})
+        msp.add_spline(
+            [(x * k, y * k) for x, y in ((0, 9000), (3000, 12000), (6000, 9000))], dxfattribs={"layer": "MUROS"}
+        )
+        doc.saveas(path)
+        reports.append(infer_plan(path).report)
+    mm, m = reports
+    assert m["units"]["unit"] == "m"
+    assert m["unpaired"]["faces"] == mm["unpaired"]["faces"]
+    assert m["unpaired"]["length_mm"] == pytest.approx(mm["unpaired"]["length_mm"], abs=0.01)
+
+
 def test_walls_inside_a_block(tmp_path):
     gt = plans.house()
     res = infer_plan(draft(gt, tmp_path / "blk.dxf", in_block=(5000.0, 3000.0), noise=False))

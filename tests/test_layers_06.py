@@ -393,6 +393,20 @@ def test_a_drawing_with_nothing_readable_names_the_three_routes(tmp_path):
 # --- units ----------------------------------------------------------------------------------
 
 
+def test_splines_and_ellipses_flatten_within_5_mm_whatever_the_drawing_unit(tmp_path):
+    axes = []
+    for unit, k in ((units.MM, 1.0), (units.M, 0.001)):
+        doc, msp = _doc(unit)
+        msp.add_ellipse((0, 0), major_axis=(4000 * k, 0), ratio=0.6, dxfattribs={"layer": "PLOMADA-MURO-150"})
+        fit = [(0, 8000), (2000, 10000), (4000, 8000), (6000, 10000)]
+        msp.add_spline([(x * k, y * k) for x, y in fit], dxfattribs={"layer": "PLOMADA-MURO-150"})
+        axes.append([w.axis for w in read_plan(_save(doc, tmp_path, f"curvas{k}.dxf")).plan.walls])
+    (ell_mm, spl_mm), (ell_m, spl_m) = axes
+    assert len(ell_mm) > 32 and len(ell_m) == len(ell_mm) and len(spl_m) == len(spl_mm)
+    for got, want in ((ell_m, ell_mm), (spl_m, spl_mm)):
+        assert [list(v) for v in got] == [pytest.approx(list(v), abs=1e-6) for v in want]
+
+
 def test_insunits_scales_coordinates_but_never_the_numbers_in_layer_names(tmp_path):
     doc, msp = _doc(units.CM)
     _box(msp, w=600, h=400)
