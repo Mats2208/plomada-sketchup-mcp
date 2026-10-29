@@ -72,6 +72,12 @@ module Plomada
           views << Geometry.axonometric_drawing('axonometria', flat.(plot), 3000, 2000)
           views << Geometry.axonometric_drawing('axonometria_seccionada', flat.(plot), 3000, 2000,
                                                 cut_z: top['elevation'] + top['height'] - 600.0)
+          # One per storey, cut where its plan is cut and framed on the building, not the plot: the
+          # 45-degree cutaway a set of drawings uses to show every floor's rooms and furniture.
+          storeys.each do |s|
+            views << Geometry.axonometric_drawing("axonometria_seccionada_#{s['name']}", flat.(building), 3000, 2000,
+                                                  cut_z: s['elevation'] + cut)
+          end
         end
         build_job(model, dir, views, styles, px_per_m)
       end
