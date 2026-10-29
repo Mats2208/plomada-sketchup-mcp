@@ -53,6 +53,7 @@ from .models import (
     describe_error,
 )
 from .preview import PreviewError, render, save
+from .revit_plan import HORIZUN_SCHEMA_VERSION, RevitStorey, plan_to_revit
 
 INSTRUCTIONS = """\
 Plomada models architecture inside a running SketchUp 2025 (Windows) from plans drawn in any CAD.
@@ -85,6 +86,8 @@ AutoCAD); preview_plan shows a plan or a DXF as a PNG without SketchUp.
 An ordinary drawing (an architect's DXF or DWG: walls as parallel lines, doors as leaf and arc, rooms as
 text) goes through plan_from_dxf, which returns a DRAFT plan and a report: review it, fix the plan, tell
 the user what was assumed, then build_plan. plan_from_dxf, write_plan_dxf and preview_plan need no SketchUp.
+For Revit, revit_batches compiles the plan (or one per storey) into ordered Horizun Revit MCP calls; it needs
+neither SketchUp nor Revit.
 If a mutating call times out or the connection drops, its outcome is unknown: call get_plan or
 status before retrying. execute_ruby is off unless the user enables it in SketchUp.
 """
@@ -170,6 +173,23 @@ class PlanInput(BaseModel):
     pools: Annotated[list[Pool], Field(default_factory=list, description="recessed or raised pools, any storey")]
     ramps: Annotated[list[Ramp], Field(default_factory=list, description="ramps from z_start to z_end, at most 20 %")]
     site_on_ground: Annotated[bool, Field(description="place this plan's site at ground_level_mm itself")] = False
+
+
+class RevitStoreyInput(BaseModel):
+    """One storey for revit_batches: a plan or a DXF, plus its name, height and elevation."""
+
+    plan: Annotated[PlanInput | None, Field(description="the storey's plan, mm")] = None
+    dxf_path: Annotated[str | None, Field(min_length=1, description="or a .dxf / .dwg build_from_autocad reads")] = None
+    name: Annotated[
+        str | None, Field(pattern=STOREY_PATTERN, description="N00, N01...; default the file's storey or by order")
+    ] = None
+    height: Annotated[float | None, Field(gt=0, le=10_000, description="storey and wall height, mm")] = None
+    elevation: Annotated[
+        float | None,
+        Field(
+            ge=ELEVATION_MIN_MM, le=ELEVATION_MAX_MM, description="mm of the floor; default stacked on the one below"
+        ),
+    ] = None
 
 
 UnitsChoice = Annotated[
@@ -867,6 +887,107 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         path = save(png, stem)
         return [Image(data=png, format="png"), {"path": str(path), "width": w, "height": h, "bytes": len(png)}]
 
+    @mcp.tool(annotations=READ)
+    @exact_errors
+    async def revit_batches(
+        plan: Annotated[PlanInput | None, Field(description="one storey's plan, mm")] = None,
+        dxf_path: Annotated[str | None, Field(min_length=1, description="or one storey's .dxf / .dwg")] = None,
+        storeys: Annotated[
+            list[RevitStoreyInput] | None,
+            Field(min_length=1, description="or several storeys in build order, each a plan or a dxf_path"),
+        ] = None,
+        storey: Annotated[
+            str | None, Field(pattern=STOREY_PATTERN, description="name of the single storey; default its own or N00")
+        ] = None,
+        storey_height: Annotated[
+            float | None, Field(gt=0, le=10_000, description="storey and wall height, mm; default the plan's or 2800")
+        ] = None,
+        elevation: Annotated[
+            float | None,
+            Field(ge=ELEVATION_MIN_MM, le=ELEVATION_MAX_MM, description="mm of the single storey's floor; default 0"),
+        ] = None,
+        roof: Annotated[
+            Literal["flat", "gable", "hip", "none"],
+            Field(description="roof of the top storey; gable needs a rectangular footprint"),
+        ] = "flat",
+        overhang: Annotated[float, Field(ge=0, le=3_000, description="roof overhang past the outer face, mm")] = (
+            cfg.overhang_mm
+        ),
+        pitch: Annotated[float, Field(gt=0, lt=75, description="gable or hip slope, degrees")] = cfg.gable_pitch_deg,
+        slab: Annotated[bool, Field(description="a floor under each exterior wall where the plan has no slabs")] = True,
+        units: UnitsChoice = "auto",
+        template: Annotated[
+            str, Field(min_length=1, description="the .rte; a bare name is looked up in Revit's Templates folder")
+        ] = "Default_M_ESP.rte",
+        revit_year: Annotated[int, Field(ge=2023, le=2027, description="the Revit the project is made in")] = 2027,
+        rvt_path: Annotated[
+            str | None, Field(min_length=1, description="absolute path of the new .rvt; default an $input placeholder")
+        ] = None,
+        export_dir: Annotated[
+            str | None,
+            Field(min_length=1, description="absolute folder for the exports; default an $input placeholder"),
+        ] = None,
+        exports: Annotated[
+            list[Literal["dwg", "ifc", "fbx"]], Field(description="files the last stage exports; [] for none")
+        ] = ["dwg", "ifc", "fbx"],  # noqa: B006 - pydantic copies defaults
+        stair_railings: Annotated[bool, Field(description="a railing on each stair, both sides")] = True,
+        family_paths: Annotated[
+            dict[Literal["door", "window", "column_round", "column_rect"], str] | None,
+            Field(description="absolute .rfa loaded when the template has no family of that kind"),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Compiles a plan (one storey) or storeys into the ordered calls that rebuild it natively in Revit with
+        the Horizun Revit MCP (schemas of Horizun 3.0.6): document, levels, wall and floor types, walls (one per
+        segment, arcs as curved walls), door and window types, openings, floors, roof, rooms, stairs, railings,
+        columns, curtain walls, verification and DWG / IFC / FBX exports. Ids made by an earlier call appear as
+        {"$ref": name}, bound by that call's binds. Also returns not_mapped (what has no native Revit element and
+        how to resolve it), assumptions to confirm in Revit and warnings. Reads the files only; neither SketchUp
+        nor Revit is involved, and nothing is sent to Horizun."""
+        given = sum(x is not None for x in (plan, dxf_path, storeys))
+        if given != 1:
+            raise ToolError(
+                "revit_batches refused its input (-32004): give plan, dxf_path or storeys, one of them. Fix it."
+            )
+        items = storeys or [RevitStoreyInput(plan=plan, dxf_path=dxf_path, name=storey, elevation=elevation)]
+
+        def load() -> list[RevitStorey]:
+            out: list[RevitStorey] = []
+            for i, item in enumerate(items):
+                where = "plan" if storeys is None else f"storeys[{i}]"
+                height = item.height or storey_height
+                if (item.plan is None) == (item.dxf_path is None):
+                    raise DxfPlanError(f"{where} takes plan or dxf_path, one of them")
+                if item.plan is not None:
+                    try:
+                        checked = Plan.model_validate(item.plan.model_dump())
+                    except ValidationError as exc:
+                        root = where if storeys is None else f"{where}.plan"
+                        raise DxfPlanError(describe_error(exc, root)) from None
+                else:
+                    checked = read_plan(item.dxf_path or "", height, units).plan
+                out.append(RevitStorey(checked, item.name, height, item.elevation))
+            return out
+
+        try:
+            specs = await asyncio.to_thread(load)
+            return plan_to_revit(
+                specs,
+                template=template,
+                horizun_version=HORIZUN_SCHEMA_VERSION,
+                revit_year=revit_year,
+                roof=roof,
+                overhang=overhang,
+                pitch=pitch,
+                slab=slab,
+                rvt_path=rvt_path,
+                export_dir=export_dir,
+                exports=exports,
+                stair_railings=stair_railings,
+                family_paths=family_paths,
+            )
+        except (DxfPlanError, ValueError) as exc:
+            raise ToolError(f"revit_batches refused its input (-32004): {exc}. Fix it and call again.") from None
+
     @mcp.tool(annotations=_mut(destructive=False, idempotent=True))
     @exact_errors
     async def create_scene(
@@ -994,6 +1115,45 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         For Blender use obj (one-sided, triangulated, materials by name): SketchUp writes FBX as ASCII, which
         Blender's FBX importer refuses."""
         return await b.mutate("export_model", "export_model", {"path": path, "format": format}, ctx)
+
+    @mcp.tool(annotations=_mut(destructive=False, idempotent=True))
+    @exact_errors
+    async def library_prepare(
+        ctx: Context,
+        keys: Annotated[
+            list[str] | None,
+            Field(
+                min_length=1, description="map keys to prepare, e.g. ['sofa_3_seat', 'car_sedan']; default every src"
+            ),
+        ] = None,
+        force: Annotated[
+            bool, Field(description="convert again even when the cached .skp is newer than the source")
+        ] = False,
+        library: Annotated[
+            str | None, Field(min_length=1, description="folder holding mapa_componentes.json; default PLOMADA_LIBRARY")
+        ] = None,
+        deadline_ms: DeadlineMs = 600_000,
+    ) -> dict[str, Any]:
+        """Converts the library's non-SketchUp models to .skp: every map entry with "src" (.glb, .gltf, .dae,
+        .stl; a .gltf is packed into a .glb first) is imported, normalised ("drop" leaves out named nodes such as
+        a ground plane, "up" stands a model lying down, "src_scale" fixes the unit, "front" turns it to face -y,
+        the centre of its bottom goes on the origin, materials are prefixed lib_<file>_) and saved as the cached
+        .skp ("skp", default next to the source) that builds load. .obj and .fbx have no SketchUp importer:
+        convert them to .glb. Leaves the open model as it was and adds no
+        undo step. Returns per entry: status (converted, cached, failed, missing_src), faces, size_mm,
+        materials, textures and any warning about its size."""
+        lib = library or library_path
+        if lib is None:
+            raise ToolError(
+                "library_prepare has no component library: set PLOMADA_LIBRARY or put mapa_componentes.json in "
+                "C:\\mcp\\biblioteca, or pass library"
+            )
+        if not (Path(lib) / "mapa_componentes.json").is_file():
+            raise ToolError(f"library_prepare refused its input (-32004): no mapa_componentes.json in {lib}")
+        params: dict[str, Any] = {"library": str(lib), "force": force}
+        if keys is not None:
+            params["keys"] = keys
+        return await b.mutate("library_prepare", "library_prepare", params, ctx, deadline_ms)
 
     # --- housekeeping -----------------------------------------------------------------------
 

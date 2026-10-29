@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`revit_batches`**: compiles a plan, a DXF or several storeys into the ordered Horizun Revit MCP calls that
+  rebuild it natively in Revit (levels, types, walls with real arcs, openings, floors, roof, rooms, stairs,
+  railings, columns, curtain walls, verification, DWG/IFC/FBX), with `$ref` placeholders between calls and a
+  `not_mapped` list. Bridge-only and read-only; see `skill/reference/revit.md`.
+- **Library models that are not `.skp`, and `library_prepare`.** A `mapa_componentes.json` entry may name a `src`
+  (`.glb`, `.gltf`, `.dae`, `.stl`): the new tool `library_prepare` imports it with `DefinitionList#import`, normalises
+  it (`src_scale` for the unit, `front` and `up` to face -y standing up, `drop` to leave out named nodes, the centre of
+  its bottom on the origin, materials prefixed `lib_<file>_`) and saves a cached `.skp` next to it, inside an operation
+  it aborts, so the open model and its undo stack are untouched. A build that finds a source without its cache
+  imports it on first use. A `.gltf` with its `.bin` and textures is packed into a `.glb` by a pure-Ruby packer
+  (`Plomada::Gltf`). Checked on SketchUp 2025 Pro: `.glb`, `.dae`, `.stl` import; `.gltf` only packed; `.obj` and
+  `.fbx` have no importer and are refused by name. New map field `z` lifts a model (a wall-hung basin).
+  - **Verified live** on the isolated SketchUp: a 35-model CC0 / CC BY library (Poly Haven, Sketchfab through
+    Objaverse) converted in 117 s, and `casa_completa_N00` plus both storeys of `casa_2_plantas` built with every
+    piece facing the room, at scale and on the floor.
+
 ## [0.6.1] - 2026-10-18
 
 ### Fixed

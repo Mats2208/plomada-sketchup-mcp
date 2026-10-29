@@ -155,4 +155,5 @@ Full contract with every field and default: [reference/plan-input.md](reference/
 | [reference/routes.md](reference/routes.md) | choosing or running an input route: AutoCAD MCP Pro, any CAD via the layer standard, inference from an ordinary drawing, prompt → plan → AutoCAD, image → plan |
 | [reference/plan-input.md](reference/plan-input.md) | writing or fixing plan JSON: every record, field, default and limit, with a curved multi-storey example |
 | [reference/tools.md](reference/tools.md) | choosing a tool or its arguments: the full catalogue with defaults |
+| [reference/revit.md](reference/revit.md) | taking a plan to Revit through the Horizun Revit MCP: `revit_batches`, its stages, refs and what does not map |
 | [reference/troubleshooting.md](reference/troubleshooting.md) | a refusal, a warning, a timeout, a wrong-looking model, the furniture library |

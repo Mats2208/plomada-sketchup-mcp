@@ -62,7 +62,7 @@ module Plomada
       def library_faces(model, library, keys)
         keys.to_h do |k|
           entry = library && Library.entry(library, 'sitio', k)
-          [k, entry ? Library.face_count(Library.definition(model, entry[:path], entry[:part])) : 0]
+          [k, entry ? Library.face_count(Library.definition_for(model, entry)) : 0]
         end
       end
 

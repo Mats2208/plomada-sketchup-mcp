@@ -23,6 +23,7 @@ and they **are not retried automatically**. "Bridge-only" tools run without Sket
 | `build_plan` | `plan` (PlanInput) + the same options | Builds the storey from plan JSON. |
 | `plan_from_dxf` *(0.6, bridge-only)* | `path`; `layers` mapping; `units`; thickness range; `default_opening` (`skip`); door and window defaults | Infers a **draft** PlanInput from an ordinary drawing, plus a report (layers used, confidence, unresolved gaps, dropped pieces). Review it, fix it, then call `build_plan`. |
 | `preview_plan` *(0.6, bridge-only)* | `plan` **or** `dxf_path` (.dxf / .dwg), `width` (1600) | PNG under 350 KB. A plan is drawn as `write_plan_dxf` draws it; a file is drawn as it plots. Check a plan before building, or look at a drawing before inferring it. |
+| `revit_batches` *(bridge-only)* | `plan` **or** `dxf_path` **or** `storeys`; `roof` (`flat`); `slab` (true); `template` (`Default_M_ESP.rte`); `rvt_path`; `export_dir`; `exports` | The ordered Horizun Revit MCP calls that rebuild the plan in Revit, plus `not_mapped` and `assumptions`. See [revit.md](revit.md). |
 | `write_plan_dxf` *(bridge-only)* | `plan`, `path` (.dxf / .dwg), `storey`, `storey_height`, `elevation`; `style` (`drawing` / `records` / `layers`, 0.6); `format` (`dxf` / `dwg`, 0.6); `open` (false, 0.6) | Writes the plan as an mm architectural DXF that AutoCAD opens: walls with real arcs and cut faces, doors with swings, windows, room labels, stairs, plus the data layers. `build_from_autocad` reads it back **exactly**. `open=true` opens it in the default app (AutoCAD). `style="layers"` writes the pure layer standard and returns `lost`: whatever it can't carry. |
 
 ## Edit (re-solve from the stored plan)
@@ -48,6 +49,7 @@ and they **are not retried automatically**. "Bridge-only" tools run without Sket
 | `export_scene_images` | `dir`, `width`, `height`, `style`, `format` (`png`) | One image per scene. `hidden_line` gives the visible edges only, for AI line passes. |
 | `export_drawings` | `dir`, `views` (plans, elevations, sections, axonometrics), `styles` (`render`, `line`), `px_per_m` (110), `cut_height` (1200), `sections` | Every orthographic view at one scale. The model is unchanged. |
 | `export_model` | `path`, `format` (`skp` / `fbx` / `obj`) | Use `obj` for Blender. `skp` needs a model saved at least once. A heavy furniture library makes huge OBJ files: warn the user first. |
+| `library_prepare` | `keys` (every entry with `src`), `force` (false), `library` (`PLOMADA_LIBRARY`), `deadline_ms` | Converts the library's `.glb` / `.gltf` / `.dae` / `.stl` sources to cached `.skp`, normalised by `src_scale`, `front`, `up`, `drop`. Leaves the open model as it was. Run it after adding models, and with `force` after changing those fields; read `size_mm` and `warning` per entry. `.obj` and `.fbx` must be converted to `.glb` first. |
 
 ## Housekeeping
 

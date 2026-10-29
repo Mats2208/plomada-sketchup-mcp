@@ -7,6 +7,7 @@ require_relative 'su/build'
 require_relative 'su/edit'
 require_relative 'su/tools'
 require_relative 'su/drawings'
+require_relative 'su/library_prep'
 
 module Plomada
   # The wire methods the bridge calls. Reads answer within the tick; jobs run
@@ -50,6 +51,7 @@ module Plomada
       r.job('export_scene_images') { |p, ctx| SU::Scenes.export_images(p, ctx) }
       r.job('export_model') { |p, ctx| SU::Export.job(p, ctx) }
       r.job('export_drawings') { |p, ctx| SU::Drawings.job(p, ctx) }
+      r.job('library_prepare') { |p, ctx| SU::LibraryPrep.job(p, ctx) }
       r.job('reset_plomada') { |p, ctx| SU::Edit.reset(p, ctx) }
       r.job('undo') { |p, ctx| SU::Edit.undo(p, ctx) }
       r.job('execute_ruby') { |p, ctx| SU::RubyEval.job(p, ctx) }

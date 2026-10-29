@@ -2,12 +2,15 @@
 
 require 'json'
 require_relative 'kit'
+require_relative 'library_prep'
 require_relative '../geometry'
 
 module Plomada
   module SU
     # The component library (C:\mcp\biblioteca by default): mapa_componentes.json
-    # says which .skp replaces each AutoCAD block. A definition is loaded once
+    # says which model replaces each AutoCAD block: a .skp, or a .glb, .dae,
+    # .obj... ("src") that LibraryPrep imports and caches as a .skp next to it.
+    # A definition is loaded once
     # per model (remembered by its path and part), cleaned of what a download
     # carries besides the object (hidden geometry, images, texts, dimensions,
     # guides), and placed with Geometry.fit_component.
@@ -35,28 +38,61 @@ module Plomada
         data
       end
 
-      # {path:, fit:, rot:, scale:, part:} for +key+ in +section+ (following
-      # string aliases to other keys), or nil when there is no usable .skp for
-      # it. +part+ picks one top-level group or component of a file that holds
-      # several objects (its index among them).
+      # {path:, src:, fit:, rot:, scale:, part:, z:} for +key+ in +section+
+      # (following string aliases to other keys), or nil when there is no
+      # usable model for it. +path+ is the .skp to load; an entry with a "src"
+      # (a .glb, .dae, .obj... that SketchUp imports) has its cached .skp there
+      # and +src+ set, and is imported and cached on first use when the cache
+      # is missing or older than the source (library_prepare does it ahead).
+      # +part+ picks one top-level group or component of a file that holds
+      # several objects (its index among them); +z+ lifts it (mm, a wall-hung
+      # basin).
       def entry(dir, section, key)
         data = map(dir)
         return nil unless data
 
+        value = resolve(data, data.dig(section, key))
+        paths = Geometry.library_paths(dir, value)
+        return nil unless paths && paths[:skp].downcase.end_with?('.skp')
+
+        if paths[:src]
+          return nil unless File.file?(paths[:src]) || File.file?(paths[:skp])
+        else
+          return nil unless File.file?(paths[:skp])
+        end
+
+        { path: paths[:skp], src: paths[:src], fit: value['fit'] || 'native', rot: (value['rot'] || 0).to_f,
+          scale: (value['scale'] || 1).to_f, part: value['part'], z: (value['z'] || 0).to_f, value: value }
+      end
+
+      # The entry a map value stands for: a Hash, or a string naming another
+      # key in any section (followed up to four times).
+      def resolve(data, value)
         seen = 0
-        value = data.dig(section, key)
         while value.is_a?(String) && seen < 4
           alias_key = value
           value = SECTIONS.map { |s| data.dig(s, alias_key) }.find { |v| v.is_a?(Hash) }
           seen += 1
         end
-        return nil unless value.is_a?(Hash) && value['skp'].is_a?(String)
+        value.is_a?(Hash) ? value : nil
+      end
 
-        file = File.expand_path(value['skp'], dir)
-        return nil unless file.downcase.end_with?('.skp') && File.file?(file)
-
-        { path: file, fit: value['fit'] || 'native', rot: (value['rot'] || 0).to_f,
-          scale: (value['scale'] || 1).to_f, part: value['part'] }
+      # The definition for an +entry+ (Library.entry): loaded once per model
+      # from its .skp, or imported from its source and cached first when the
+      # .skp is missing or stale.
+      def definition_for(model, entry)
+        src = entry[:src]
+        if src && File.file?(src)
+          skp_mtime = File.file?(entry[:path]) ? File.mtime(entry[:path]) : nil
+          if Geometry.library_stale?(skp_mtime, File.mtime(src))
+            return definition(model, entry[:path], entry[:part]) do
+              defn, = LibraryPrep.import(model, src, entry[:value])
+              LibraryPrep.save(defn, entry[:path])
+              defn
+            end
+          end
+        end
+        definition(model, entry[:path], entry[:part])
       end
 
       def definition(model, path, part = nil)
@@ -64,7 +100,7 @@ module Plomada
         found = model.definitions.find { |d| d.get_attribute(DICT, 'library_path') == key }
         return found if found
 
-        defn = model.definitions.load(path)
+        defn = block_given? ? yield : model.definitions.load(path)
         clean(defn)
         unless part.nil?
           parts = defn.entities.select { |e| e.is_a?(Sketchup::ComponentInstance) || e.is_a?(Sketchup::Group) }
@@ -100,13 +136,13 @@ module Plomada
       # fit 'footprint' +at+ is the block's back-left corner and w x d its
       # size, for 'native' +at+ is where the component's centre stands.
       def place(model, entities, entry, at, rotation, z, w: nil, d: nil)
-        defn = definition(model, entry[:path], entry[:part])
+        defn = definition_for(model, entry)
         bb = defn.bounds
         bmin = SU.to_mm(bb.min)
         bmax = SU.to_mm(bb.max)
         fit = Geometry.fit_component(bmin, bmax, entry[:fit], w: w, d: d, rot: entry[:rot], scale: entry[:scale])
         centre = Geom::Vector3d.new(-((bmin[0] + bmax[0]) / 2.0).mm, -((bmin[1] + bmax[1]) / 2.0).mm, -bmin[2].mm)
-        t = Geom::Transformation.translation(Geom::Vector3d.new(at[0].mm, at[1].mm, z.mm)) *
+        t = Geom::Transformation.translation(Geom::Vector3d.new(at[0].mm, at[1].mm, (z + (entry[:z] || 0.0)).mm)) *
             Geom::Transformation.rotation(ORIGIN, Z_AXIS, rotation.to_f.degrees) *
             Geom::Transformation.translation(Geom::Vector3d.new(fit[:translate][0].mm, fit[:translate][1].mm, 0)) *
             Geom::Transformation.rotation(ORIGIN, Z_AXIS, fit[:rotation_deg].degrees) *

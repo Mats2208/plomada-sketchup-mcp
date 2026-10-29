@@ -34,7 +34,7 @@ def test_tool_list_and_annotations(run, tmp_path):
         return (await client.list_tools()).tools
 
     tools = {t.name: t for t in run(_session(FakeExtension(), tmp_path, body))}
-    assert len(tools) == 31
+    assert len(tools) == 33
     for name in (
         "status",
         "model_info",
@@ -46,6 +46,7 @@ def test_tool_list_and_annotations(run, tmp_path):
         "job_status",
         "plan_from_dxf",
         "preview_plan",
+        "revit_batches",
     ):
         assert tools[name].annotations.read_only_hint is True, name
         assert tools[name].annotations.destructive_hint is False
@@ -56,6 +57,10 @@ def test_tool_list_and_annotations(run, tmp_path):
     assert tools["set_slab"].annotations.idempotent_hint is True
     assert tools["write_plan_dxf"].annotations.read_only_hint is False  # open=true launches the app on every call
     assert tools["write_plan_dxf"].annotations.idempotent_hint is False
+    # library_prepare writes .skp caches next to the sources but leaves the model as it was
+    assert tools["library_prepare"].annotations.read_only_hint is False
+    assert tools["library_prepare"].annotations.destructive_hint is False
+    assert tools["library_prepare"].annotations.idempotent_hint is True
     props = tools["build_from_autocad"].input_schema["properties"]
     assert props["storey_height"]["default"] == 2800.0 and "mm" in props["storey_height"]["description"]
     assert props["roof"]["enum"] == ["flat", "gable", "hip", "none"]
@@ -213,3 +218,30 @@ def test_argument_bounds_are_enforced_by_the_schema(run, tmp_path):
     result = run(_session(fake, tmp_path, body))
     assert result.is_error
     assert "undo" not in fake.methods()
+
+
+def test_library_prepare_sends_the_library_keys_and_force(run, tmp_path):
+    lib = tmp_path / "biblioteca"
+    lib.mkdir()
+    (lib / "mapa_componentes.json").write_text('{"sitio": {"tree": {"src": "a/tree.glb"}}}', encoding="utf-8")
+    reply = {"library": str(lib), "entries": [], "converted": 0, "cached": 0, "failed": 0}
+    fake = FakeExtension(handlers={"library_prepare": lambda p: reply})
+
+    async def body(client):
+        every = await client.call_tool("library_prepare", {})
+        some = await client.call_tool("library_prepare", {"keys": ["tree"], "force": True})
+        return every, some
+
+    every, some = run(_session(fake, tmp_path, body, library_dir=lib))
+    assert not every.is_error and not some.is_error, _text(every) + _text(some)
+    sent = [p for m, p in fake.seen if m == "library_prepare"]
+    assert sent[0] == {"library": str(lib), "force": False}
+    assert sent[1] == {"library": str(lib), "force": True, "keys": ["tree"]}
+
+
+def test_library_prepare_refuses_a_folder_without_a_map(run, tmp_path):
+    async def body(client):
+        return await client.call_tool("library_prepare", {"library": str(tmp_path)})
+
+    result = run(_session(FakeExtension(), tmp_path, body))
+    assert result.is_error and "no mapa_componentes.json in" in _text(result)

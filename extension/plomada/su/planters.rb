@@ -54,7 +54,7 @@ module Plomada
       def light?(model, entry, key, heavy)
         return false if heavy.key?(key)
 
-        faces = Library.face_count(Library.definition(model, entry[:path], entry[:part]))
+        faces = Library.face_count(Library.definition_for(model, entry))
         return true if faces <= CONFIG[:plant_max_faces]
 
         heavy[key] = faces

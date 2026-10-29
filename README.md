@@ -289,13 +289,16 @@ export_scene_images dir=.../04_pases                 -> 10 PNG
 ### Furniture library and site
 
 `build_from_autocad` places real models for the furniture blocks when it finds a component library: the folder in
-`PLOMADA_LIBRARY`, or `biblioteca` next to the repo. Inside it, `mapa_componentes.json` maps each block to a `.skp`.
+`PLOMADA_LIBRARY`, or `biblioteca` next to the repo. Inside it, `mapa_componentes.json` maps each block to a `.skp`,
+or to a `.glb`, `.gltf`, `.dae` or `.stl` (`src`) that Plomada converts to a cached `.skp` next to it.
 Pass `furniture="massing"` for boxes only. The format is in [`docs/mapa_componentes.example.json`](docs/mapa_componentes.example.json):
 
 ```json
 "fridge": { "skp": "sketchup/cocina/28_refrigerator.skp", "fit": "real", "rot": 270 },
 "chair":  { "skp": "sketchup/living/21_eames.skp", "fit": "real", "part": 1 },
-"palm":   { "skp": "sketchup/vegetacion/07_palm.skp", "fit": "native", "scale": 2.5 }
+"palm":   { "skp": "sketchup/vegetacion/07_palm.skp", "fit": "native", "scale": 2.5 },
+"sofa_3_seat": { "src": "polyhaven/sofa_03/sofa_03_1k.gltf", "fit": "footprint" },
+"wc":     { "src": "sketchfab/wc/toilet.glb", "fit": "real", "src_scale": 0.4, "front": "-x" }
 ```
 
 The fields:
@@ -306,8 +309,23 @@ The fields:
   - `native`: a site object at its own size, centred on its block.
 - **`rot`:** turns a model whose front does not face -y (the SketchUp Front view).
 - **`part`:** picks one object from a file that holds several.
+- **`z`:** lifts the model, in mm (a wall-hung basin).
 
 Hidden geometry, background images and texts that downloads carry are dropped on load.
+
+**Models that are not `.skp`.** SketchUp 2025 Pro imports `.glb`, `.dae` and `.stl` (a `.gltf`, as Poly Haven ships
+it, is packed into a `.glb` first); `.obj` and `.fbx` have no importer, so convert them to `.glb`. The tool
+`library_prepare` imports every entry with a `src`, normalises it and saves the `.skp` (`skp`, by default the source
+with the `.skp` extension) without touching the open model and without an undo step; a build that meets a source with
+no cache does the same on first use. The normalising fields, applied once when the cache is made:
+
+- **`src_scale`:** fixes the unit (a car exported in centimetres-and-then-some: `0.026`); the result reports the
+  size in mm and warns when it looks like the wrong unit.
+- **`front`:** `-y` (default), `+x`, `+y` or `-x`: where the model's front points after import; it is turned to -y.
+- **`up`:** `+z` (default) or the axis that is up in a model lying down (`+y`, `-y`, `+x`, `-x`, `-z`).
+- **`drop`:** names (substrings) of imported nodes to leave out, such as a ground plane under a street light.
+
+Materials are renamed `lib_<file>_<name>`. After changing one of these fields run `library_prepare` with `force`.
 
 The site lives in the ground-floor DXF:
 
