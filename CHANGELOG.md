@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **A cut axonometric per storey.** `export_drawings` adds `axonometria_seccionada_<storey>` for every floor, cut
+  where its plan is cut (`cut_height`) and framed on the building: the 45-degree cutaway that shows each floor's
+  rooms and furniture. `axonometria_seccionada` (below the roof, framed on the plot) is unchanged.
 - **`auto_scenes` looks toward the light.** Each room camera scores its four corners by the diagonal and by the
   metres of window (and doors 1500 mm or wider) whose centre is in frame and not behind another wall, so an interior
   no longer stares at a blank corner when a window is in the room. Without windows the choice is unchanged.
