@@ -46,6 +46,7 @@ and they **are not retried automatically**. "Bridge-only" tools run without Sket
 |---|---|---|
 | `create_scene` | `name`, `eye` [x,y], `target` [x,y,z], `eye_height` (1600), `fov`, `two_point` (true), `style` | On an upper storey, `eye_height` = storey elevation + 1600. |
 | `auto_scenes` | `interior` (true), `exterior` (true), `storey`, `style`, `interior_fov` (60), `exterior_fov` (40), `replace` (true) | Makes `I_<storey>_<nn>_<room>`, `E1_suroeste`...`E4_noroeste` and `A_aerea`. |
+| `axonometric_scenes` | `cut_height` (1200), `style` | Parallel 45-degree scenes framed on the building: `AX_general` and `AX_<storey>` cut above each floor, labels hidden; rerunning replaces their cuts. |
 | `export_scene_images` | `dir`, `width`, `height`, `style`, `format` (`png`) | One image per scene. `hidden_line` gives the visible edges only, for AI line passes. |
 | `export_drawings` | `dir`, `views` (plans, elevations, sections, axonometrics), `styles` (`render`, `line`), `px_per_m` (110), `cut_height` (1200), `sections` | Every orthographic view at one scale. The model is unchanged. |
 | `export_model` | `path`, `format` (`skp` / `fbx` / `obj`) | Use `obj` for Blender. `skp` needs a model saved at least once. A heavy furniture library makes huge OBJ files: warn the user first. |

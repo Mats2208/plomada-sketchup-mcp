@@ -34,7 +34,7 @@ def test_tool_list_and_annotations(run, tmp_path):
         return (await client.list_tools()).tools
 
     tools = {t.name: t for t in run(_session(FakeExtension(), tmp_path, body))}
-    assert len(tools) == 33
+    assert len(tools) == 34
     for name in (
         "status",
         "model_info",
@@ -53,6 +53,10 @@ def test_tool_list_and_annotations(run, tmp_path):
     for name in ("build_from_autocad", "reset_plomada", "undo", "execute_ruby"):
         assert tools[name].annotations.read_only_hint is False
         assert tools[name].annotations.destructive_hint is True
+    # axonometric_scenes adds scenes and section planes but erases nothing it did not make
+    assert tools["axonometric_scenes"].annotations.read_only_hint is False
+    assert tools["axonometric_scenes"].annotations.destructive_hint is False
+    assert tools["axonometric_scenes"].annotations.idempotent_hint is True
     assert tools["set_slab"].annotations.read_only_hint is False  # replace a slab: the same call, the same result
     assert tools["set_slab"].annotations.idempotent_hint is True
     assert tools["write_plan_dxf"].annotations.read_only_hint is False  # open=true launches the app on every call

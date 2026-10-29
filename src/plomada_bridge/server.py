@@ -1042,6 +1042,21 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
         }
         return await b.mutate("auto_scenes", "auto_scenes", with_storey(params, storey), ctx)
 
+    @mcp.tool(annotations=_mut(destructive=False, idempotent=True))
+    @exact_errors
+    async def axonometric_scenes(
+        ctx: Context,
+        cut_height: Annotated[
+            float, Field(gt=0, le=10_000, description="mm above each floor where its scene is cut")
+        ] = 1200.0,
+        style: Annotated[Literal["shaded", "hidden_line", "lines_only"], Field(description=STYLE_HELP)] = "shaded",
+    ) -> dict[str, Any]:
+        """Creates parallel 45-degree scenes framed on the building: AX_general, and AX_<storey> cut
+        cut_height above each floor with its own section plane, roof and storeys above removed. They render
+        with export_scene_images like any scene (for AI images too); recreating them replaces their cuts."""
+        params = {"cut_height": cut_height, "style": style}
+        return await b.mutate("axonometric_scenes", "axonometric_scenes", params, ctx)
+
     @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
     @exact_errors
     async def export_scene_images(

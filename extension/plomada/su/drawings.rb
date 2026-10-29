@@ -17,6 +17,7 @@ module Plomada
     # the last step (or on abort).
     module Drawings
       KINDS = %w[plans elevations sections axonometrics].freeze
+      FIT_BUILDING_MARGIN = 1.1 # air around a building framed alone
       STYLES = %w[render line].freeze
       SKIP = %w[terrain room site].freeze
 
@@ -76,7 +77,7 @@ module Plomada
           # 45-degree cutaway a set of drawings uses to show every floor's rooms and furniture.
           storeys.each do |s|
             views << Geometry.axonometric_drawing("axonometria_seccionada_#{s['name']}", flat.(building), 3000, 2000,
-                                                  cut_z: s['elevation'] + cut)
+                                                  cut_z: s['elevation'] + cut).merge(fit_building: true)
           end
         end
         build_job(model, dir, views, styles, px_per_m)
@@ -134,7 +135,16 @@ module Plomada
               c.perspective = false
               c.height = v[:height_mm].mm if v[:height_mm]
               view.camera = c
-              view.zoom_extents if v[:fit]
+              if v[:fit_building]
+                # Framed on the building alone, then the site comes back around it, cropped by the frame.
+                around = top_level(model).select { |e| e.visible? && %w[site terrain].include?(SU.kind(e)) }
+                around.each { |e| e.visible = false }
+                view.zoom_extents
+                around.each { |e| e.visible = true }
+                view.camera.height = view.camera.height * FIT_BUILDING_MARGIN
+              elsif v[:fit]
+                view.zoom_extents
+              end
               path = File.join(dir, "#{v[:name]}_#{style == 'render' ? 'render' : 'linea'}.png")
               write(view, path, v[:width_px], v[:height_px])
               files << { 'name' => v[:name], 'style' => style, 'path' => path, 'width' => v[:width_px], 'height' => v[:height_px],

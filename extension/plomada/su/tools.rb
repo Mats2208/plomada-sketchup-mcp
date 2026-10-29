@@ -264,6 +264,64 @@ module Plomada
         end
       end
 
+      # Parallel 45-degree scenes for documentation and AI: AX_general (the whole
+      # building) and AX_<storey> cut cut_height above each floor, the section
+      # plane stored in the scene. Each is framed on the building, then the site
+      # comes back around it.
+      def axonometric(params, ctx)
+        model = ctx.model
+        storeys = Storeys.list(model)
+        raise InvalidParams, 'no Plomada walls in this model; build a house before axonometric_scenes' if storeys.empty?
+
+        cut = params['cut_height'].nil? ? 1200.0 : Plan.positive(params['cut_height'], 'cut_height', 10_000.0)
+        style = Capture.style!(params.fetch('style', 'shaded') || 'shaded', 'style', STYLES.keys)
+        bb = Geom::BoundingBox.new
+        SU.plomada_entities(model).each { |e| bb.add(e.bounds) unless %w[site terrain room].include?(SU.kind(e)) }
+        lo, hi = SU.to_mm(bb.min), SU.to_mm(bb.max)
+        box = [lo[0, 2], hi[0, 2]]
+        specs = [['AX_general', nil]] + storeys.map { |s| ["AX_#{s['name']}", s['elevation'] + cut] }
+        made = []
+        units = specs.map do |name, cut_z|
+          ["scene #{name}", lambda {
+            v = Geometry.axonometric_drawing(name, box, 3000, 2000, cut_z: cut_z)
+            model.entities.grep(Sketchup::SectionPlane)
+                 .select { |sp| sp.get_attribute(DICT, 'kind') == 'axonometric_cut' && sp.get_attribute(DICT, 'scene') == name }
+                 .each(&:erase!)
+            plane = nil
+            if v[:section]
+              plane = model.entities.add_section_plane([SU.pt(v[:section][:point]), Geom::Vector3d.new(*v[:section][:normal])])
+              plane.name = name if plane.respond_to?(:name=)
+              SU.set_attrs(plane, { 'kind' => 'axonometric_cut', 'scene' => name })
+            end
+            model.entities.active_section_plane = plane
+            view = model.active_view
+            cam = Sketchup::Camera.new(SU.pt(v[:eye]), SU.pt(v[:target]), Z_AXIS)
+            cam.perspective = false
+            view.camera = cam
+            around = model.entities.select { |e| (e.is_a?(Sketchup::Group) || e.is_a?(Sketchup::ComponentInstance)) && e.visible? && %w[site terrain].include?(SU.kind(e)) }
+            around.each { |e| e.visible = false }
+            view.zoom_extents
+            around.each { |e| e.visible = true }
+            view.camera.height = view.camera.height * 1.3 # room for an export at another aspect ratio
+            model.rendering_options['RenderMode'] = STYLES[style]
+            model.rendering_options['DisplaySectionPlanes'] = false
+            page = model.pages[name] || model.pages.add(name)
+            page.transition_time = 0.0 if page.respond_to?(:transition_time=)
+            page.use_section_planes = true
+            labels = [model.layers['Ambientes']].compact.select(&:visible?) # room labels stay out of renders
+            labels.each { |l| l.visible = false }
+            page.update
+            labels.each { |l| l.visible = true }
+            SU.set_attrs(page, { 'kind' => 'scene', 'style' => style, 'view' => 'axonometric', 'cut_z' => cut_z })
+            model.entities.active_section_plane = nil
+            made << { 'name' => name, 'cut_z_mm' => cut_z }
+          }]
+        end
+        UnitJob.new('Plomada: axonometric scenes', units) do
+          { 'scenes' => made, 'total_scenes' => model.pages.size }
+        end
+      end
+
       # Sets the camera and saves it as scene +name+ (created or updated).
       # +hidden_tags+ are hidden in this scene only (the room labels, for renders).
       def add_page(model, name, eye, target, fov, style, two_point, attrs = {}, hidden_tags: [])
@@ -271,6 +329,9 @@ module Plomada
         model.rendering_options['RenderMode'] = STYLES[style]
         page = model.pages[name] || model.pages.add(name)
         page.transition_time = 0.0 if page.respond_to?(:transition_time=)
+        # The scene stores "no section cut", so an axonometric scene's cut never carries over into it.
+        model.entities.active_section_plane = nil
+        page.use_section_planes = true
         hidden = hidden_tags.filter_map { |t| model.layers[t] }.select(&:visible?)
         hidden.each { |l| l.visible = false }
         page.update
@@ -412,14 +473,22 @@ module Plomada
         cam = view.camera
         saved = [Sketchup::Camera.new(cam.eye, cam.target, cam.up, cam.perspective?, cam.perspective? ? cam.fov : 35.0), ro['RenderMode']]
         files = []
+        cuts = model.entities.grep(Sketchup::SectionPlane).select { |sp| sp.get_attribute(DICT, 'kind') == 'axonometric_cut' }
+        saved_plane = model.entities.active_section_plane
+        saved_display = ro['DisplaySectionPlanes']
         restore = lambda {
           view.camera = saved[0]
           ro['RenderMode'] = saved[1] if ro['RenderMode'] != saved[1]
+          model.entities.active_section_plane = saved_plane&.valid? ? saved_plane : nil
+          ro['DisplaySectionPlanes'] = saved_display
         }
         units = [['prepare', -> { FileUtils.mkdir_p(dir) }]]
         pages.each do |page|
           units << ["image #{page.name}", lambda {
             view.camera = page.camera
+            # The camera alone does not bring the scene's cut: an axonometric scene's own plane, none elsewhere.
+            model.entities.active_section_plane = cuts.find { |sp| sp.valid? && sp.get_attribute(DICT, 'scene') == page.name }
+            ro['DisplaySectionPlanes'] = false
             # The scene's own style (stored by create_scene) unless overridden;
             # a scene Plomada did not make keeps the current render mode.
             page_style = page.get_attribute(DICT, 'style')

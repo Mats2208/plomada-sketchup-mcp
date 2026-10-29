@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`axonometric_scenes`**: parallel 45-degree scenes framed on the building, `AX_general` and `AX_<storey>` cut
+  `cut_height` above each floor with its own section plane, room labels hidden. `export_scene_images` renders them
+  like any scene, so the cutaways can go through the AI route too. Plomada's scenes now store "no section cut" and
+  `export_scene_images` applies each scene's own cut, so an axonometric cut never leaks into another scene.
+- **`scripts/sketchup_guard.ps1`**: waits for Plomada's port and answers the dialogs that would leave an agent
+  stuck: the recovered-autosave question with No, version and extension warnings with their safe button, in Win32
+  and Qt message boxes. A save prompt is left for a person. `-Launch` starts the development SketchUp and kills it
+  if its port never opens; a SketchUp the guard did not start is never killed.
 - **A cut axonometric per storey.** `export_drawings` adds `axonometria_seccionada_<storey>` for every floor, cut
   where its plan is cut (`cut_height`) and framed on the building: the 45-degree cutaway that shows each floor's
   rooms and furniture. `axonometria_seccionada` (below the roof, framed on the plot) is unchanged.

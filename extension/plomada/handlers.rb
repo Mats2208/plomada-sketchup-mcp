@@ -48,6 +48,7 @@ module Plomada
       r.job('set_material') { |p, ctx| SU::Edit.set_material(p, ctx) }
       r.job('create_scene') { |p, ctx| SU::Scenes.create(p, ctx) }
       r.job('auto_scenes') { |p, ctx| SU::Scenes.auto(p, ctx) }
+      r.job('axonometric_scenes') { |p, ctx| SU::Scenes.axonometric(p, ctx) }
       r.job('export_scene_images') { |p, ctx| SU::Scenes.export_images(p, ctx) }
       r.job('export_model') { |p, ctx| SU::Export.job(p, ctx) }
       r.job('export_drawings') { |p, ctx| SU::Drawings.job(p, ctx) }
