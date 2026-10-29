@@ -476,13 +476,22 @@ module Plomada
         cuts = model.entities.grep(Sketchup::SectionPlane).select { |sp| sp.get_attribute(DICT, 'kind') == 'axonometric_cut' }
         saved_plane = model.entities.active_section_plane
         saved_display = ro['DisplaySectionPlanes']
+        # Room labels and the template's scale figure never belong in an image; they come back afterwards.
+        labels = [model.layers['Ambientes']].compact.select(&:visible?)
+        figures = SU.stray_figures(model)
         restore = lambda {
           view.camera = saved[0]
           ro['RenderMode'] = saved[1] if ro['RenderMode'] != saved[1]
           model.entities.active_section_plane = saved_plane&.valid? ? saved_plane : nil
           ro['DisplaySectionPlanes'] = saved_display
+          labels.each { |l| l.visible = true if l.valid? }
+          figures.each { |f| f.visible = true if f.valid? }
         }
-        units = [['prepare', -> { FileUtils.mkdir_p(dir) }]]
+        units = [['prepare', lambda {
+          FileUtils.mkdir_p(dir)
+          labels.each { |l| l.visible = false }
+          figures.each { |f| f.visible = false }
+        }]]
         pages.each do |page|
           units << ["image #{page.name}", lambda {
             view.camera = page.camera
@@ -504,7 +513,7 @@ module Plomada
         units << ['restore view', restore]
         job = UnitJob.new('Plomada: export scene images', units, operation: false) do
           { 'dir' => dir, 'width' => width, 'height' => height, 'images' => files,
-            'warnings' => SU.stray_figure_warnings(model) }
+            'warnings' => SU.stray_figure_warnings(model).map { |w| "#{w} (hidden in these images)" } }
         end
         job.define_singleton_method(:on_abort) { |_e| restore.call }
         job
