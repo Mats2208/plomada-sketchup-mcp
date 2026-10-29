@@ -104,6 +104,30 @@ module Plomada
       raw ? JSON.parse(raw) : nil
     end
 
+    # Person-sized component instances at the top level that Plomada did not
+    # make: the scale figure SketchUp's templates stand at the origin. It shows
+    # in every scene, the OBJ and the drawings, and a ControlNet then paints a
+    # person there. Plomada only names it; deleting it is the user's call.
+    FIGURE_HEIGHT_MM = (1200.0..2100.0)
+    FIGURE_FOOT_MM = 1200.0
+
+    def stray_figures(model)
+      model.entities.grep(Sketchup::ComponentInstance).select do |e|
+        next false if !e.valid? || plomada?(e) || e.hidden?
+
+        b = e.bounds
+        FIGURE_HEIGHT_MM.cover?(b.depth.to_mm) && [b.width, b.height].max.to_mm <= FIGURE_FOOT_MM
+      end
+    end
+
+    def stray_figure_warnings(model)
+      stray_figures(model).map do |e|
+        "a person-sized component Plomada did not make is in the model (#{e.definition.name}, persistent_id " \
+          "#{e.persistent_id}), most likely the template's scale figure: it shows in scenes, the OBJ and AI images; " \
+          'delete it in SketchUp'
+      end
+    end
+
     # Top-level groups and component instances carrying a plomada attribute.
     def plomada_entities(model)
       model.entities.select do |e|

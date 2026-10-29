@@ -34,6 +34,38 @@ class TestGeometryCameras < Minitest::Test
     assert_operator G.dist(cam[:eye], cam[:target]), :>, 3000.0
   end
 
+  def test_light_openings_finds_window_centres_along_the_axis
+    plan = { 'walls' => [BOX], 'openings' => [
+      { 'id' => 'V1', 'wall' => 'EXT', 'opening_kind' => 'window', 'offset' => 7000.0, 'width' => 1200.0 },
+      { 'id' => 'P1', 'wall' => 'EXT', 'opening_kind' => 'door', 'offset' => 1000.0, 'width' => 800.0 },
+      { 'id' => 'P2', 'wall' => 'EXT', 'opening_kind' => 'door', 'offset' => 15000.0, 'width' => 2400.0 }
+    ] }
+    lights = G.light_openings(plan)
+    assert_equal 2, lights.size # the 800 mm door lets no light in
+    assert_in_delta 6000.0, lights[0][:at][0], 1e-9 # 7600 along the ring: 1600 up the east side
+    assert_in_delta 1600.0, lights[0][:at][1], 1e-9
+    assert_in_delta 2400.0, lights[1][:width], 1e-9
+  end
+
+  def test_room_camera_turns_toward_the_window
+    edges = G.wall_body_edges([BOX])
+    axis = G.dominant_axis([BOX])
+    plain = G.room_camera([3000.0, 2000.0], edges, axis)
+    # A window in the middle of the wall the plain camera has at its back.
+    back_wall = plain[:eye][0] < 3000 ? [0.0, 2000.0] : [6000.0, 2000.0]
+    cam = G.room_camera([3000.0, 2000.0], edges, axis, lights: [{ at: back_wall, width: 2000.0 }])
+    look = G.unit(G.sub(cam[:target], cam[:eye]))
+    to_window = G.unit(G.sub(back_wall, cam[:eye]))
+    assert_operator G.dot(look, to_window), :>, Math.cos(38 * Math::PI / 180), cam.inspect
+  end
+
+  def test_window_behind_another_wall_does_not_count
+    inner = { 'id' => 'M1', 'axis' => [[3000, 0], [3000, 4000]], 'thickness' => 150.0, 'justification' => 'center' }
+    edges = G.wall_body_edges([BOX, inner])
+    assert_equal 0.0, G.window_metres([1000.0, 2000.0], [1.0, 0.0], [{ at: [6000.0, 2000.0], width: 1500.0 }], edges)
+    assert_in_delta 1.5, G.window_metres([4000.0, 2000.0], [1.0, 0.0], [{ at: [6000.0, 2000.0], width: 1500.0 }], edges), 1e-9
+  end
+
   def test_room_camera_follows_a_rotated_plan
     a = 30 * Math::PI / 180
     rot = ->(p) { [(p[0] * Math.cos(a)) - (p[1] * Math.sin(a)), (p[0] * Math.sin(a)) + (p[1] * Math.cos(a))] }

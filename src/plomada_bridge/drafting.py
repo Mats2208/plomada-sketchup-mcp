@@ -11,7 +11,9 @@ layers only), so the documentation can follow drafting conventions freely:
   extension hinges it (Geometry.door_parts: swing in opens to the left of the
   host axis; hand left hinges the far jamb for in, the near one for out), and
   the quarter swing ARC from the closed leaf to the open one; arched heads
-  change nothing in plan;
+  change nothing in plan; a door GARAGE_DOOR_MIN_WIDTH_MM wide or more is
+  the sectional door the extension builds: the closed panel on the inner
+  face and its overhead track dashed inward;
 - windows: the classic three lines across the opening, at both faces and the
   middle of the wall;
 - rooms: the name centred on the room point and, when the plan gives an area,
@@ -52,6 +54,8 @@ DOC_LAYERS: dict[str, tuple[int, int]] = {
     "A-PLNT": (3, 18),  # planters
     "A-POOL": (5, 25),  # pools
 }
+GARAGE_DOOR_MIN_WIDTH_MM = 2200.0  # as the extension's garage_door_min_width_mm: drawn as a sectional door
+GARAGE_DOOR_TRACK_MM = 2200.0  # overhead track depth when the opening gives no height
 ROOM_TEXT_MM = 250.0  # letter height of a room name
 AREA_TEXT_MM = 180.0  # letter height of a room area
 STAIR_TEXT_MM = 150.0  # letter height of SUBE
@@ -304,6 +308,9 @@ def _openings(msp: Modelspace, plan: Plan) -> int:
             continue
         side = 1.0 if o.swing == "in" else -1.0
         d = left if o.swing == "in" else right
+        if o.width >= GARAGE_DOOR_MIN_WIDTH_MM:
+            count += _garage_door(msp, wall, d, side, s0, s1, o.height or GARAGE_DOOR_TRACK_MM)
+            continue
         hinge_far = (o.hand == "left") == (o.swing == "in")
         sh, so = (s1, s0) if hinge_far else (s0, s1)
         (hx, hy), th = planar.station(wall.axis, wall.closed, sh, after=not hinge_far)
@@ -321,6 +328,27 @@ def _openings(msp: Modelspace, plan: Plan) -> int:
         msp.add_arc(hinge, leaf, start, end, dxfattribs={"layer": "A-DOOR"})
         count += 2
     return count
+
+
+def _garage_door(msp: Modelspace, wall: Wall, d: float, side: float, s0: float, s1: float, track: float) -> int:
+    """A sectional door: the closed panel across the opening on the inner face, and its overhead
+    track (the panel raised under the ceiling) dashed inward as deep as the door is tall."""
+    corners = []
+    for s, after in ((s0, True), (s1, False)):
+        (x, y), t = planar.station(wall.axis, wall.closed, s, after=after)
+        n = planar.left_normal(t)
+        corners.append(((x + n[0] * d, y + n[1] * d), n))
+    (a, na), (b, nb) = corners
+    msp.add_line(a, b, dxfattribs={"layer": "A-DOOR"})
+    deep = [
+        (b[0] + nb[0] * side * track, b[1] + nb[1] * side * track),
+        (a[0] + na[0] * side * track, a[1] + na[1] * side * track),
+    ]
+    attribs = {"layer": "A-DOOR"}
+    if "DASHED" in msp.doc.linetypes:
+        attribs["linetype"] = "DASHED"
+    msp.add_lwpolyline([a, b, *deep], close=True, dxfattribs=attribs)
+    return 2
 
 
 def _area(area_mm2: float) -> str:

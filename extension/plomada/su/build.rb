@@ -210,7 +210,7 @@ module Plomada
             'internal_faces_removed' => state[:removed], 'manifold' => state[:manifold],
             'groups' => state[:groups], 'storey' => storey, 'elevation' => state[:elevation],
             'storey_height' => prep[:height], 'roof' => state[:roof], 'stair_wells' => state[:wells].size,
-            'warnings' => prep[:warnings], 'undo' => "one step: #{label}"
+            'warnings' => prep[:warnings] + SU.stray_figure_warnings(model), 'undo' => "one step: #{label}"
           }
         end
       end

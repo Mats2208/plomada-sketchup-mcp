@@ -308,12 +308,13 @@ module Plomada
             edges = Geometry.wall_body_edges(plan['walls']) +
                     Geometry.ring_edges(stairs + Storeys.wells(model, elevation, storey))
             axis = Geometry.dominant_axis(plan['walls'])
-            pieces = plan['furniture'].select { |f| Geometry.furniture_item?(f['item']) }
+            lights = Geometry.light_openings(plan)
+            pieces =plan['furniture'].select { |f| Geometry.furniture_item?(f['item']) }
                                       .map { |f| Geometry.furniture_footprint(f['item'], f['at'], f['rotation']) }
             plan['rooms'].each do |room|
               # Furniture is in the way too, except a piece the room point itself falls on.
               around = pieces.reject { |fp| Geometry.point_in_polygon?(room['at'], fp) }
-              cam = Geometry.room_camera(room['at'], edges + Geometry.ring_edges(around), axis)
+              cam = Geometry.room_camera(room['at'], edges + Geometry.ring_edges(around), axis, lights: lights)
               next skipped << "#{storey}/#{room['id']}" unless cam
 
               z = elevation + eye_h
@@ -433,7 +434,8 @@ module Plomada
         end
         units << ['restore view', restore]
         job = UnitJob.new('Plomada: export scene images', units, operation: false) do
-          { 'dir' => dir, 'width' => width, 'height' => height, 'images' => files }
+          { 'dir' => dir, 'width' => width, 'height' => height, 'images' => files,
+            'warnings' => SU.stray_figure_warnings(model) }
         end
         job.define_singleton_method(:on_abort) { |_e| restore.call }
         job
@@ -472,7 +474,7 @@ module Plomada
           raise Error.new(Codes::SKETCHUP, "export to #{format.upcase} reported success but wrote no file at #{path}") unless File.file?(path)
         }]]
         UnitJob.new("Plomada: export #{format}", units, operation: false) do
-          { 'path' => path, 'format' => format, 'bytes' => File.size(path) }
+          { 'path' => path, 'format' => format, 'bytes' => File.size(path), 'warnings' => SU.stray_figure_warnings(model) }
         end
       end
     end

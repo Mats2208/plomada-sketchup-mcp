@@ -245,6 +245,26 @@ def test_doors_hinge_and_swing_as_the_extension_builds_them(tmp_path, swing, han
     assert (arc.dxf.end_angle - arc.dxf.start_angle) % 360 == pytest.approx(90)
 
 
+def test_a_garage_door_is_drawn_sectional_not_swinging():
+    plan = Plan.model_validate(
+        {
+            "walls": [{"id": "EXT", "axis": BOX, "thickness": 200, "closed": True}],
+            "openings": [
+                {"id": "G", "wall": "EXT", "opening_kind": "door", "offset": 1000, "width": 2700, "height": 2300}
+            ],
+        }
+    )  # fmt: skip
+    msp = build_doc(plan, "drawing")[0].modelspace()
+    assert not msp.query('ARC[layer=="A-DOOR"]')
+    (panel,) = msp.query('LINE[layer=="A-DOOR"]')
+    assert tuple(panel.dxf.start)[:2] == pytest.approx((1000, 100))
+    assert tuple(panel.dxf.end)[:2] == pytest.approx((3700, 100))
+    (track,) = msp.query('LWPOLYLINE[layer=="A-DOOR"]')
+    assert track.closed and track.dxf.linetype == "DASHED"
+    ys = sorted({round(p[1]) for p in track.get_points("xy")})
+    assert ys == [100, 2400]  # 2300 mm of track inward from the inner face
+
+
 def test_windows_rooms_stairs_and_columns_are_drawn(tmp_path):
     plan = Plan.model_validate(STANDARD)
     msp = build_doc(plan, "drawing")[0].modelspace()

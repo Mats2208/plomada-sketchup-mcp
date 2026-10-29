@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`auto_scenes` looks toward the light.** Each room camera scores its four corners by the diagonal and by the
+  metres of window (and doors 1500 mm or wider) whose centre is in frame and not behind another wall, so an interior
+  no longer stares at a blank corner when a window is in the room. Without windows the choice is unchanged.
+- **Stray scale figures are named.** `build_from_autocad`, `build_plan`, `export_scene_images` and `export_model`
+  warn about a person-sized component Plomada did not make (the scale figure SketchUp templates stand at the origin),
+  with its persistent id: it shows in every scene, the OBJ and the AI images. Plomada does not delete it.
+- **Garage doors are drawn sectional.** In `write_plan_dxf` drawings a door 2200 mm wide or more (the sectional door
+  the extension builds) is the closed panel on the inner face and its overhead track dashed inward, not a swing.
 - **`revit_batches`**: compiles a plan, a DXF or several storeys into the ordered Horizun Revit MCP calls that
   rebuild it natively in Revit (levels, types, walls with real arcs, openings, floors, roof, rooms, stairs,
   railings, columns, curtain walls, verification, DWG/IFC/FBX), with `$ref` placeholders between calls and a

@@ -53,3 +53,12 @@ The `assumptions` list: exterior side of `Wall.Create`, door facing vs swing and
 the sill parameter, the door/window and column type parameter names, the curtain spacing parameters,
 internal origin = project base point, and corner joins passing Horizun's location check. Rehearse
 one storey first and read every refusal.
+
+## Permission profile
+
+Under Horizun's default `safe_write` profile the tools that touch the document session or write files are **hidden**
+from the client, not refused: `horizun_document_session`, `horizun_open_document`, `horizun_create_family`,
+`horizun_export`, `horizun_capture_view`, `horizun_verify_changes` and `horizun_execute_python` do not appear in the
+tool list at all. The `document`, `opening_types` (family loading), `verify` and `exports` stages need
+`"permission_profile": "full_write"` in `%USERPROFILE%\.horizun\settings.json`, set by the machine's owner.
+Without it, build into an already open project with the template's own families and save and export by hand.

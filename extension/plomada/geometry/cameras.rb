@@ -19,6 +19,10 @@ module Plomada
     CAMERA_WALL_MARGIN_MM = 350.0 # mm the interior eye keeps off the walls
     CAMERA_FIT_MARGIN = 1.08      # breathing room around a framed building
     CAMERA_FENCE_CLEAR_MM = 1500.0 # mm an exterior eye keeps inside a fence it would look across
+    CAMERA_WINDOW_WEIGHT = 3.0     # metres of diagonal one metre of window in frame is worth
+    CAMERA_HALF_FOV_DEG = 38.0     # horizontal half-angle a window centre counts as in frame
+    CAMERA_WINDOW_DEPTH_MM = 300.0 # a ray may stop this short of a window and still see it (its wall face)
+    CAMERA_GLAZED_DOOR_MM = 1500.0 # doors this wide or wider count as glazed (sliding doors, garage doors)
 
     # The edges of closed plan rings (stair footprints, stair wells): obstacles
     # for the room cameras like the walls.
@@ -81,7 +85,11 @@ module Plomada
     # {eye: [x, y], target: [x, y], span: mm} for one room, or nil when its
     # point is not enclosed (a ray escapes) or the room is too small for the
     # eye to stand in.
-    def room_camera(at, edges, axis, margin: CAMERA_WALL_MARGIN_MM)
+    # +lights+ (light_openings) make a corner that sees windows win over a
+    # longer diagonal toward a blank corner: each metre of window in frame
+    # counts CAMERA_WINDOW_WEIGHT metres of diagonal. Without lights the
+    # choice is the longest diagonal, eye in its farther corner.
+    def room_camera(at, edges, axis, margin: CAMERA_WALL_MARGIN_MM, lights: [])
       n = left_normal(axis)
       diagonals = [[1, 1], [-1, 1], [-1, -1], [1, -1]].map do |i, j|
         unit(add(scale(axis, i), scale(n, j)))
@@ -89,16 +97,58 @@ module Plomada
       reach = diagonals.map { |d| ray_distance(at, d, edges) }
       return nil unless reach.all?(&:finite?)
 
-      # The corner opposite the longest view across the room.
-      k = (0..3).max_by { |i| reach[i] + reach[(i + 2) % 4] }
-      k = (k + 2) % 4 if reach[(k + 2) % 4] > reach[k]
-      back = reach[k] - margin
-      return nil if back < 0.0
+      best = (0..3).filter_map do |k|
+        back = reach[k] - margin
+        next if back < 0.0
 
-      d = diagonals[k]
-      eye = add(at, scale(d, back))
-      target = add(at, scale(d, -0.5 * reach[(k + 2) % 4]))
-      { eye: eye, target: target, span: reach[k] + reach[(k + 2) % 4] }
+        d = diagonals[k]
+        eye = add(at, scale(d, back))
+        span = reach[k] + reach[(k + 2) % 4]
+        score = (span / 1000.0) + (CAMERA_WINDOW_WEIGHT * window_metres(eye, scale(d, -1.0), lights, edges))
+        { eye: eye, target: add(at, scale(d, -0.5 * reach[(k + 2) % 4])), span: span, rank: [score, reach[k]] }
+      end.max_by { |c| c[:rank] }
+      best&.slice(:eye, :target, :span)
+    end
+
+    # Metres of window an eye looking along +look+ has in frame: the centre
+    # within CAMERA_HALF_FOV_DEG of the view and not behind another wall.
+    def window_metres(eye, look, lights, edges)
+      cos_half = Math.cos(CAMERA_HALF_FOV_DEG * Math::PI / 180.0)
+      lights.sum(0.0) do |l|
+        v = sub(l[:at], eye)
+        r = Math.hypot(v[0], v[1])
+        next 0.0 if r < 1.0
+
+        u = scale(v, 1.0 / r)
+        next 0.0 if dot(u, look) < cos_half
+
+        ray_distance(eye, u, edges) >= r - CAMERA_WINDOW_DEPTH_MM ? l[:width] / 1000.0 : 0.0
+      end
+    end
+
+    # Plan centre and width of each opening that lets light in: windows and
+    # doors CAMERA_GLAZED_DOOR_MM wide or more, at offset + width / 2 along
+    # the host's axis (arc segments taken as chords).
+    def light_openings(plan)
+      walls = plan['walls'].to_h { |w| [w['id'], w] }
+      plan['openings'].filter_map do |o|
+        next unless o['opening_kind'] == 'window' || o['width'].to_f >= CAMERA_GLAZED_DOOR_MM
+
+        w = walls[o['wall']] or next
+        pts = w['axis'].map { |p| p[0, 2] }
+        pts += [pts[0]] if w['closed']
+        s = o['offset'].to_f + (o['width'].to_f / 2.0)
+        centre = nil
+        pts.each_cons(2) do |a, b|
+          l = dist(a, b)
+          if s <= l
+            centre = add(a, scale(unit(sub(b, a)), s))
+            break
+          end
+          s -= l
+        end
+        centre && { at: centre, width: o['width'].to_f }
+      end
     end
 
     # Eye-level three-quarter views of the building whose vertices are
