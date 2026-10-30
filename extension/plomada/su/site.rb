@@ -21,6 +21,8 @@ module Plomada
       TREES = %w[ARBOL PALMERA PINO].freeze
       # Library keys whose stand-in is an ellipsoid; any other heavy model stands in as a box.
       VEGETATION = %w[tree palm pine hedge potted_plant].freeze
+      # Library keys an AI pass should draw itself (export_scene_images soft_objects): cars and plants.
+      SOFT = (VEGETATION + %w[car_sedan car_suv car_pickup]).freeze
 
       module_function
 

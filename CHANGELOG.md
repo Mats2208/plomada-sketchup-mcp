@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `export_scene_images` `soft_objects` (`keep` / `hide` / `massing`): for AI passes, the library cars and plants can be left out or shown as their massing stand-ins, so the AI draws them real where they stand instead of copying the low-poly models. The model is restored afterwards.
+
+### Added
 
 - **`axonometric_scenes`**: parallel 45-degree scenes framed on the building, `AX_general` and `AX_<storey>` cut
   `cut_height` above each floor with its own section plane, room labels hidden. `export_scene_images` renders them

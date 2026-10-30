@@ -479,6 +479,11 @@ module Plomada
         # Room labels and the template's scale figure never belong in an image; they come back afterwards.
         labels = [model.layers['Ambientes']].compact.select(&:visible?)
         figures = SU.stray_figures(model)
+        # Soft objects (library cars and plants): low-poly models an AI copies as toys, so an AI pass can
+        # leave them out (hide) or keep only where they stand (massing: the build's box/ellipsoid stand-ins).
+        soft = Plan.choice(params.fetch('soft_objects', 'keep') || 'keep', 'soft_objects', SOFT_OBJECTS)
+        objects = soft == 'keep' ? [] : soft_objects(model)
+        swapped = []
         restore = lambda {
           view.camera = saved[0]
           ro['RenderMode'] = saved[1] if ro['RenderMode'] != saved[1]
@@ -486,11 +491,22 @@ module Plomada
           ro['DisplaySectionPlanes'] = saved_display
           labels.each { |l| l.visible = true if l.valid? }
           figures.each { |f| f.visible = true if f.valid? }
+          objects.each { |o| o.hidden = false if o.valid? } if soft == 'hide'
+          swapped.each { |o, defn| o.definition = defn if o.valid? && defn.valid? }
         }
         units = [['prepare', lambda {
           FileUtils.mkdir_p(dir)
           labels.each { |l| l.visible = false }
           figures.each { |f| f.visible = false }
+          if soft == 'hide'
+            objects.each { |o| o.hidden = true }
+          elsif soft == 'massing'
+            objects.each do |o|
+              round = Site::VEGETATION.include?(Site.key_for(o.get_attribute(DICT, 'item')))
+              swapped << [o, o.definition]
+              o.definition = Site.proxy_definition(model, o.definition, round)
+            end
+          end
         }]]
         pages.each do |page|
           units << ["image #{page.name}", lambda {
@@ -517,6 +533,16 @@ module Plomada
         end
         job.define_singleton_method(:on_abort) { |_e| restore.call }
         job
+      end
+
+      SOFT_OBJECTS = %w[keep hide massing].freeze
+
+      # Library cars and plants of the site (Site::SOFT); lamps, tables and the rest stay as they are.
+      def soft_objects(model)
+        model.entities.grep(Sketchup::ComponentInstance).select do |e|
+          SU.kind(e) == 'site' && e.get_attribute(DICT, 'site_kind') == 'object' && !e.hidden? &&
+            Site::SOFT.include?(Site.key_for(e.get_attribute(DICT, 'item')))
+        end
       end
     end
 

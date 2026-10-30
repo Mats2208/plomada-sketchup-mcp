@@ -1069,11 +1069,21 @@ def create_server(bridge: Bridge | None = None) -> MCPServer:
             Field(description="override every scene's style; " + STYLE_HELP),
         ] = None,
         format: Annotated[Literal["png", "jpg"], Field(description="image format")] = "png",
+        soft_objects: Annotated[
+            Literal["keep", "hide", "massing"],
+            Field(
+                description="library cars, trees and plants: keep; hide them; or massing, a box (an ellipsoid for "
+                "plants) in their place, so an AI pass keeps where they stand but draws them real instead of "
+                "copying the low-poly models"
+            ),
+        ] = "keep",
     ) -> dict[str, Any]:
         """Writes one image per scene (antialiased) and restores the camera afterwards."""
         params: dict[str, Any] = {"dir": dir, "width": width, "height": height, "format": format}
         if style is not None:
             params["style"] = style
+        if soft_objects != "keep":
+            params["soft_objects"] = soft_objects
         return await b.mutate("export_scene_images", "export_scene_images", params, ctx)
 
     @mcp.tool(annotations=_mut(destructive=True, idempotent=True))
