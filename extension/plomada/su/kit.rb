@@ -109,7 +109,7 @@ module Plomada
     # in every scene, the OBJ and the drawings, and a ControlNet then paints a
     # person there. Plomada only names it; deleting it is the user's call.
     FIGURE_HEIGHT_MM = (1200.0..2100.0)
-    FIGURE_FOOT_MM = 1200.0
+    FIGURE_FOOT_MM = 1500.0 # SketchUp 2026's figure stands on a 1237 mm square
 
     def stray_figures(model)
       model.entities.grep(Sketchup::ComponentInstance).select do |e|

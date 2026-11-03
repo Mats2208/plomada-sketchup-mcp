@@ -12,7 +12,8 @@
 
 [![Version](https://img.shields.io/badge/version-0.6.1-blue?style=flat-square)](https://github.com/Mats2208/plomada-sketchup-mcp/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/Mats2208/plomada-sketchup-mcp/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/Mats2208/plomada-sketchup-mcp/actions/workflows/ci.yml)
-[![SketchUp](https://img.shields.io/badge/SketchUp-2025%20Pro-005F9E?style=flat-square)](https://www.sketchup.com)
+[![SketchUp](https://img.shields.io/badge/SketchUp-2025%20%7C%202026-005F9E?style=flat-square)](https://www.sketchup.com)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555?style=flat-square)](#install)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-00B4D8?style=flat-square)](https://modelcontextprotocol.io)
 [![Skill](https://img.shields.io/badge/agent%20skill-included-8A2BE2?style=flat-square)](skill/SKILL.md)
@@ -228,9 +229,12 @@ code in one tick.
 
 ## Install
 
-You need Windows 11, SketchUp 2025 Pro, [uv](https://docs.astral.sh/uv/) 0.11.25 and the
-[`claude`](https://docs.claude.com/en/docs/claude-code) CLI. SketchUp 2024 and 2026 are targeted through feature
-detection but were not run here.
+Plomada runs on **Windows and macOS**. You need SketchUp Pro, [uv](https://docs.astral.sh/uv/) 0.11.25 and the
+[`claude`](https://docs.claude.com/en/docs/claude-code) CLI. Measured so far: SketchUp 2025 Pro on Windows 11 and
+SketchUp 2026 (26.2) on macOS 26 with Apple silicon. SketchUp 2024 is targeted through feature detection but was
+not run here.
+
+### Windows
 
 ```powershell
 git clone https://github.com/Mats2208/plomada-sketchup-mcp C:\mcp\plomada-mcp
@@ -245,6 +249,22 @@ Tarkiin plugin out of the Plugins folder. Restart SketchUp, reconnect the MCP, a
 
 To install by hand instead, add [`plomada-0.6.1.rbz`](https://github.com/Mats2208/plomada-sketchup-mcp/releases) through
 **Extensions > Extension Manager > Install Extension**, then register `.venv\Scripts\plomada-mcp.exe` as a stdio server.
+
+### macOS
+
+```sh
+git clone https://github.com/Mats2208/plomada-sketchup-mcp ~/plomada-mcp
+cd ~/plomada-mcp
+P="$HOME/Library/Application Support/SketchUp 2026/SketchUp/Plugins"
+cp extension/plomada.rb "$P/" && rm -rf "$P/plomada" && cp -R extension/plomada "$P/"
+uvx --from uv==0.11.25 uv sync
+claude mcp add -s user sketchup -- "$PWD/.venv/bin/plomada-mcp"
+```
+
+Change `2026` to your SketchUp year, or install the `.rbz` from the Extension Manager instead of copying. Restart
+SketchUp, reconnect the MCP, and call `status`. The token lives in `~/.local/share/Plomada`. Checked on macOS:
+`build_plan`, `add_terrain`, `capture_view`, `auto_scenes` and `export_scene_images` (seven scenes, both passes at
+1536 × 1024, in 2.4 s). `fbx_export` reports false there, so export OBJ or glTF.
 
 Optional:
 - **An AutoCAD MCP to draw with.** [AutoCAD MCP Pro](https://github.com/U-C4N/Autocad-MCP) (`pip install

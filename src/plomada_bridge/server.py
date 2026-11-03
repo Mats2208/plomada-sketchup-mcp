@@ -56,7 +56,7 @@ from .preview import PreviewError, render, save
 from .revit_plan import HORIZUN_SCHEMA_VERSION, RevitStorey, plan_to_revit
 
 INSTRUCTIONS = """\
-Plomada models architecture inside a running SketchUp 2025 (Windows) from plans drawn in any CAD.
+Plomada models architecture inside a running SketchUp (2025 on Windows, 2026 on macOS) from plans drawn in any CAD.
 All lengths are millimetres in world coordinates; z is up, the floor is z 0.
 
 Typical flow: status -> build_from_autocad(dxf_path) -> capture_view -> get_plan.

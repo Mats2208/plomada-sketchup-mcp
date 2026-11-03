@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- macOS: install steps in the README, checked live on SketchUp 2026 (26.2), Apple silicon.
+
+### Fixed
+- SketchUp 2026's scale figure (a 1237 mm footprint) showed in scene images and drawings: the stray figure test now
+  takes a footprint up to 1500 mm.
+
+### Added
 - `export_scene_images` `soft_objects` (`keep` / `hide` / `massing`): for AI passes, the library cars and plants can be left out or shown as their massing stand-ins, so the AI draws them real where they stand instead of copying the low-poly models. The model is restored afterwards.
 
 ### Added
